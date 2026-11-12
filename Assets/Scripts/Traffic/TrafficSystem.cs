@@ -83,12 +83,8 @@ public class TrafficSystem : MonoBehaviour
 
     private void Start()
     {
-        var roots = new List<GameObject>();
-        for (int s = 0; s < SceneManager.sceneCount; s++)
-        {
-            Scene scene = SceneManager.GetSceneAt(s);
-            if (scene.isLoaded) roots.AddRange(scene.GetRootGameObjects());
-        }
+        // City pieces at the top level or inside Hierarchy folders.
+        var roots = HierarchyGroup.AllPieces();
 
         if (trafficLights) SetupTrafficLights(roots);
 
@@ -97,7 +93,7 @@ public class TrafficSystem : MonoBehaviour
         foreach (GameObject root in roots)
         {
             if (!root.activeInHierarchy || !root.name.StartsWith(vehicleNamePrefix)) continue;
-            if (root.GetComponent<PlayerVehicleController>() != null) continue;   // the player drives this one
+            if (root.GetComponent<PlayerVehicle>() != null) continue;   // the player drives this one
             if (root.GetComponentInChildren<MeshRenderer>() == null) continue;
             if (root.GetComponent<TrafficCar>() == null) root.AddComponent<TrafficCar>();
             count++;
@@ -258,7 +254,7 @@ public class TrafficSystem : MonoBehaviour
     {
         if (roadColliderCache.TryGetValue(c, out bool isRoad)) return isRoad;
 
-        string name = c.transform.root.name;
+        string name = HierarchyGroup.PieceRoot(c.transform).name;
         isRoad = name.StartsWith(roadPrefix);
         if (isRoad)
             foreach (string bad in notDriveable)
