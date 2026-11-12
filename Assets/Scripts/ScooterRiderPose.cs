@@ -79,8 +79,13 @@ public class ScooterRiderPose : MonoBehaviour
     [HideInInspector] public Transform leftForeArm;
     [HideInInspector] public Transform rightForeArm;
 
-    private Vector3 defaultHipsLocalPos;
-    private bool initialized = false;
+    // Standing (rest) position of the Hips. Saved with the scene so the seat offset is always applied to the
+    // same base - re-reading the already lowered hips after a script reload used to stack the offset every time.
+    [SerializeField, HideInInspector] private Vector3 restHipsLocalPos;
+    [SerializeField, HideInInspector] private bool hasRestHips;
+    [SerializeField, HideInInspector] private int restHipsVersion;
+    private const int RestHipsVersion = 2;   // bump to make saved scenes recalculate the rest position
+    private const float AnkleHeight = 0.09f; // ankle joint above the sole
 
     private void Awake()
     {
@@ -136,15 +141,29 @@ public class ScooterRiderPose : MonoBehaviour
         leftForeArm = FindDeepChild(transform, "LeftForeArm");
         rightForeArm = FindDeepChild(transform, "RightForeArm");
 
-        if (hips != null)
-        {
-            if (!initialized || defaultHipsLocalPos == Vector3.zero)
-            {
-                defaultHipsLocalPos = hips.localPosition;
-                initialized = true;
-            }
-        }
+        if (hips != null && (!hasRestHips || restHipsVersion < RestHipsVersion)) CaptureRestHips();
     }
+
+    /// Works out where the Hips stand from the leg bones (hip joint + thigh + shin + ankle height), so it doesn't
+    /// depend on the current - possibly already lowered - hips position. Falls back to the current position.
+    private void CaptureRestHips()
+    {
+        if (leftUpLeg != null && leftLeg != null && leftFoot != null)
+        {
+            float height = Mathf.Abs(leftUpLeg.localPosition.y) + leftLeg.localPosition.magnitude
+                         + leftFoot.localPosition.magnitude + AnkleHeight;
+            restHipsLocalPos = new Vector3(0f, height, 0f);
+        }
+        else
+        {
+            restHipsLocalPos = hips.localPosition;
+        }
+        hasRestHips = true;
+        restHipsVersion = RestHipsVersion;
+    }
+
+    /// Standing hips position (local to the hips' parent).
+    public Vector3 RestHipsLocalPosition => restHipsLocalPos;
 
     private Transform FindDeepChild(Transform parent, string childName)
     {
@@ -171,7 +190,7 @@ public class ScooterRiderPose : MonoBehaviour
         }
 
         // 1. Lower hips onto scooter saddle
-        hips.localPosition = defaultHipsLocalPos + hipsOffset;
+        hips.localPosition = restHipsLocalPos + hipsOffset;
 
         // 2. Spine posture & head tilt
         if (spine != null)
@@ -269,7 +288,7 @@ public class ScooterRiderPose : MonoBehaviour
         isSitting = false;
         if (hips != null)
         {
-            hips.localPosition = defaultHipsLocalPos;
+            hips.localPosition = restHipsLocalPos;
             hips.localRotation = Quaternion.identity;
         }
         if (leftUpLeg != null) leftUpLeg.localRotation = Quaternion.identity;
