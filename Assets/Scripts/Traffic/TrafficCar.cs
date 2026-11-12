@@ -1,3 +1,4 @@
+using System.Collections.Generic;
 using UnityEngine;
 
 /// <summary>
@@ -11,6 +12,8 @@ using UnityEngine;
 ///  - Tail/brake lights, blinking turn signals, nose-dive when braking, body roll in turns,
 ///    and honks at the player when they block the road.
 /// The car is a kinematic Rigidbody: it pushes the player out of the way but isn't knocked around itself.
+/// Kinematic bodies pass through each other, so before every move a car checks that its outline won't overlap any
+/// other car's outline - cars can never drive into each other, and a car that blocks another for too long backs up.
 /// </summary>
 [DisallowMultipleComponent]
 public class TrafficCar : MonoBehaviour
@@ -63,6 +66,14 @@ public class TrafficCar : MonoBehaviour
     private float hornCooldown;
     private AudioSource horn;
     private readonly RaycastHit[] obstacleHits = new RaycastHit[16];
+
+    // Hard no-overlap check against every other car (see WouldOverlapCar).
+    private static readonly List<TrafficCar> AllCars = new List<TrafficCar>();
+    private const float OverlapMargin = 0.15f;   // extra space kept around each car (m)
+    private Vector3 footprintOffset;              // centre of the car's outline in its own space (scaled)
+    private float footprintRadius = 4f;           // for a quick distance reject
+    private float hardBlockedTimer, backUpTimer;
+    private TrafficCar hardBlocker;
 
     // Visuals
     private Renderer[] brakeLights, leftIndicators, rightIndicators;
@@ -137,7 +148,12 @@ public class TrafficCar : MonoBehaviour
         halfLength = b.extents.z * Mathf.Abs(s.z);
         halfWidth = b.extents.x * Mathf.Abs(s.x);
         height = b.size.y * Mathf.Abs(s.y);
+        footprintOffset = new Vector3(b.center.x * s.x, 0f, b.center.z * s.z);
+        footprintRadius = Mathf.Sqrt(halfLength * halfLength + halfWidth * halfWidth) + footprintOffset.magnitude;
     }
+
+    private void OnEnable() { if (!AllCars.Contains(this)) AllCars.Add(this); }
+    private void OnDisable() { AllCars.Remove(this); }
 
     private void CreateLights()
     {
@@ -236,6 +252,37 @@ public class TrafficCar : MonoBehaviour
 
         Vector3 dir = Quaternion.Euler(0f, yaw, 0f) * Vector3.forward;
         float step = speed * dt;
+
+        // Never drive into another car: if this step would make the outlines overlap, stay put.
+        if (step > 0f && WouldOverlapCar(pos + dir * step, CarRotation(), out TrafficCar blocker))
+        {
+            step = 0f;
+            speed = 0f;
+            accel = -sys.braking;
+            hardBlocker = blocker;
+            hardBlockedTimer += dt;
+
+            // Two cars blocking each other (e.g. nose to nose in a junction): the lower-priority one backs up.
+            if (hardBlockedTimer > 2.5f && blocker != null && blocker.hardBlocker == this &&
+                GetInstanceID() > blocker.GetInstanceID())
+            {
+                backUpTimer = 2f;
+                hardBlockedTimer = 0f;
+            }
+        }
+        else if (step > 0f)
+        {
+            hardBlockedTimer = 0f;
+            hardBlocker = null;
+        }
+
+        if (backUpTimer > 0f)
+        {
+            backUpTimer -= dt;
+            Vector3 back = pos - dir * (1.2f * dt);
+            if (!WouldOverlapCar(back, CarRotation(), out _)) pos = back;
+            else backUpTimer = 0f;
+        }
         pos += dir * step;
         sinceManeuver += step;
         stopLineDist -= step;
@@ -490,7 +537,8 @@ public class TrafficCar : MonoBehaviour
 
         a = Mathf.Clamp(a, -sys.braking, maxAccel);
 
-        // Stuck for a long time (e.g. two cars blocking each other): squeeze past.
+        // Stuck for a long time behind something that isn't moving: try to squeeze past.
+        // (The hard outline check in FixedUpdate still stops it from driving into a car.)
         if (speed < 0.2f && a <= 0.05f && !WaitingAtLight)
         {
             blockedTimer += dt;
@@ -543,7 +591,7 @@ public class TrafficCar : MonoBehaviour
         Vector3 dir = Direction;
         float look = halfLength + minGap + speed * headway + speed * speed / (2f * sys.comfortableBraking) + 6f;
         Vector3 center = pos + Vector3.up * Mathf.Clamp(height * 0.5f, 0.6f, 1.2f);
-        Vector3 halfExtents = new Vector3(halfWidth * 0.8f, 0.4f, 0.1f);
+        Vector3 halfExtents = new Vector3(halfWidth * 0.95f, 0.4f, 0.1f);
 
         int n = Physics.BoxCastNonAlloc(center, halfExtents, dir, obstacleHits,
             Quaternion.LookRotation(dir), look, ~0, QueryTriggerInteraction.Ignore);
@@ -576,11 +624,67 @@ public class TrafficCar : MonoBehaviour
             {
                 leaderSpeed = Mathf.Max(0f, Vector3.Dot(body.linearVelocity, dir));
                 isPlayer = body.GetComponent<PlayerController>() != null ||
-                           body.GetComponent<PlayerVehicleController>() != null;
+                           body.GetComponent<PlayerVehicle>() != null;
             }
         }
         return Mathf.Max(0f, nearest - halfLength);
     }
+
+    // ---------------------------------------------------------------- car-to-car overlap
+
+    /// Would this car's outline (seen from above, plus a small margin) overlap another car if it moved to nextPos?
+    /// Moves that separate two cars which already overlap (e.g. spawned too close) are allowed.
+    private bool WouldOverlapCar(Vector3 nextPos, Quaternion nextRot, out TrafficCar blocker)
+    {
+        blocker = null;
+        Footprint(nextPos, nextRot, out Vector3 nc, out Vector3 nf, out Vector3 nr);
+        Footprint(rb.position, rb.rotation, out Vector3 cc, out Vector3 cf, out Vector3 cr);
+
+        foreach (var other in AllCars)
+        {
+            if (other == this || other.rb == null || !other.isActiveAndEnabled) continue;
+            other.Footprint(other.rb.position, other.rb.rotation, out Vector3 oc, out Vector3 of, out Vector3 or);
+
+            float reach = footprintRadius + other.footprintRadius + OverlapMargin * 2f;
+            if ((oc - nc).sqrMagnitude > reach * reach) continue;
+            if (!Overlaps(nc, nf, nr, halfLength, halfWidth, oc, of, or, other.halfLength, other.halfWidth)) continue;
+
+            // Already overlapping now: allow the move if it takes us further apart.
+            if (Overlaps(cc, cf, cr, halfLength, halfWidth, oc, of, or, other.halfLength, other.halfWidth) &&
+                Flat(nc - oc).sqrMagnitude > Flat(cc - oc).sqrMagnitude)
+                continue;
+
+            blocker = other;
+            return true;
+        }
+        return false;
+    }
+
+    /// Centre and flat forward / right axes of the car's outline for a given position and rotation.
+    private void Footprint(Vector3 position, Quaternion rotation, out Vector3 center, out Vector3 fwd, out Vector3 right)
+    {
+        center = position + rotation * footprintOffset;
+        fwd = Flat(rotation * Vector3.forward).normalized;
+        if (fwd.sqrMagnitude < 0.01f) fwd = Vector3.forward;
+        right = Vector3.Cross(Vector3.up, fwd);
+    }
+
+    /// Separating-axis test for two rectangles on the ground plane (each grown by the margin).
+    private static bool Overlaps(Vector3 ca, Vector3 fa, Vector3 ra, float la, float wa,
+                                 Vector3 cb, Vector3 fb, Vector3 rb, float lb, float wb)
+    {
+        la += OverlapMargin; wa += OverlapMargin; lb += OverlapMargin; wb += OverlapMargin;
+        Vector3 d = Flat(cb - ca);
+        foreach (Vector3 axis in new[] { fa, ra, fb, rb })
+        {
+            float projA = la * Mathf.Abs(Vector3.Dot(fa, axis)) + wa * Mathf.Abs(Vector3.Dot(ra, axis));
+            float projB = lb * Mathf.Abs(Vector3.Dot(fb, axis)) + wb * Mathf.Abs(Vector3.Dot(rb, axis));
+            if (Mathf.Abs(Vector3.Dot(d, axis)) > projA + projB) return false;   // a gap on this axis
+        }
+        return true;
+    }
+
+    private static Vector3 Flat(Vector3 v) => new Vector3(v.x, 0f, v.z);
 
     // ---------------------------------------------------------------- helpers
     private static Vector3 Right(Vector3 h) => Vector3.Cross(Vector3.up, h);
