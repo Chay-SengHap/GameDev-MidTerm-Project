@@ -36,13 +36,16 @@ public static class CityDrivingSetup
         Undo.SetCurrentGroupName("Set Up City Driving");
         var log = new List<string>();
 
-        var player = Find<PlayerVehicleController>();
+        // The scooter is preferred: it carries the courier. Without one, a car is created.
+        PlayerVehicle player = Find<ScooterController>();
+        if (player == null) player = Find<PlayerVehicle>();
+        if (player == null) player = SetUpScooter(log);
         if (player == null)
         {
             player = CreatePlayerVehicle(log);
             if (player == null) return;
         }
-        else log.Add($"Player vehicle '{player.name}' already exists - kept as is.");
+        else log.Add($"Player vehicle '{player.name}' is ready.");
 
         DisableOnFootCharacters(log);
         SetUpCamera(player, log);
@@ -105,6 +108,26 @@ public static class CityDrivingSetup
     // Extra tools
     // =====================================================================================
 
+    [MenuItem(Menu + "Use Scooter As Player", priority = 1)]
+    private static void UseScooterAsPlayer()
+    {
+        var log = new List<string>();
+        var scooter = Find<ScooterController>() ?? SetUpScooter(log);
+        if (scooter == null)
+        {
+            Debug.LogError("No scooter found. Place the 'SitPoint' prefab (scooter with the courier) in the scene first.");
+            return;
+        }
+        // Park any player car so the game, HUD and camera all switch to the scooter.
+        foreach (var car in Object.FindObjectsByType<PlayerVehicleController>(FindObjectsInactive.Exclude, FindObjectsSortMode.None))
+        {
+            Undo.RecordObject(car.gameObject, "Use Scooter As Player");
+            car.gameObject.SetActive(false);
+            Debug.Log($"Deactivated player car '{car.name}' (nothing was deleted).");
+        }
+        SetUpGameScene();
+    }
+
     [MenuItem(Menu + "Add Checkpoint At Scene View", priority = 20)]
     private static void AddCheckpointAtSceneView()
     {
@@ -149,8 +172,8 @@ public static class CityDrivingSetup
         int count = 0;
         foreach (var go in Selection.gameObjects)
         {
-            GameObject root = go.transform.root.gameObject;
-            if (root.GetComponent<PlayerVehicleController>() != null) continue;
+            GameObject root = HierarchyGroup.PieceRoot(go.transform).gameObject;
+            if (root.GetComponent<PlayerVehicle>() != null) continue;
             var settings = root.GetComponent<TrafficVehicleSettings>();
             if (settings == null) settings = Undo.AddComponent<TrafficVehicleSettings>(root);
             Undo.RecordObject(settings, "Set Traffic Behaviour");
@@ -278,7 +301,7 @@ public static class CityDrivingSetup
         Vector3 reference = character != null ? character.transform.position
             : SceneView.lastActiveSceneView != null ? SceneView.lastActiveSceneView.pivot : Vector3.zero;
 
-        var roots = SceneManager.GetActiveScene().GetRootGameObjects();
+        var roots = HierarchyGroup.Pieces(SceneManager.GetActiveScene());
         var vehicles = roots.Where(r => r.name.StartsWith("Vehicle") && r.transform != car).ToList();
 
         Transform best = null;
@@ -317,7 +340,7 @@ public static class CityDrivingSetup
         }
     }
 
-    private static void SetUpCamera(PlayerVehicleController player, List<string> log)
+    private static void SetUpCamera(PlayerVehicle player, List<string> log)
     {
         Camera cam = Camera.main != null ? Camera.main : Object.FindFirstObjectByType<Camera>();
         if (cam == null)
@@ -335,6 +358,38 @@ public static class CityDrivingSetup
             log.Add($"Added VehicleCameraFollow to '{cam.name}'.");
         }
         Wire(follow, ("target", player.transform));
+
+        // A scooter is small: frame it closer and lower than a car.
+        bool scooter = player is ScooterController;
+        var so = new SerializedObject(follow);
+        so.FindProperty("distance").floatValue = scooter ? 4.8f : 7.5f;
+        so.FindProperty("height").floatValue = scooter ? 2.1f : 3f;
+        so.FindProperty("lookHeight").floatValue = scooter ? 1.1f : 1.2f;
+        so.ApplyModifiedProperties();
+    }
+
+    /// Turns the scooter-with-courier (the object carrying ScooterRiderPose) into the player vehicle.
+    private static ScooterController SetUpScooter(List<string> log)
+    {
+        var pose = Find<ScooterRiderPose>();
+        if (pose == null) return null;
+        GameObject root = HierarchyGroup.PieceRoot(pose.transform).gameObject;
+
+        var rb = root.GetComponent<Rigidbody>();
+        if (rb == null)
+        {
+            rb = Undo.AddComponent<Rigidbody>(root);
+            rb.mass = 140f;
+        }
+        var controller = root.GetComponent<ScooterController>();
+        if (controller == null) controller = Undo.AddComponent<ScooterController>(root);   // also adds VehicleInput
+        if (root.GetComponent<VehicleCollisionHandler>() == null) Undo.AddComponent<VehicleCollisionHandler>(root);
+        Undo.RecordObject(root, "Set Up Scooter");
+        root.tag = "Player";
+        EditorUtility.SetDirty(root);
+        log.Add($"Set up '{root.name}' as the player scooter (Rigidbody, ScooterController, VehicleInput, collision handler). " +
+                "Colliders, wheels and steering are built when Play starts.");
+        return controller;
     }
 
     // =====================================================================================
@@ -344,7 +399,7 @@ public static class CityDrivingSetup
     /// Placeholder route through the nearest intersections (they are always on the road).
     private static void CreateDefaultRoute(Transform route, Vector3 start, int count, List<string> log)
     {
-        var intersections = SceneManager.GetActiveScene().GetRootGameObjects()
+        var intersections = HierarchyGroup.Pieces(SceneManager.GetActiveScene())
             .Where(r => r.activeInHierarchy &&
                         (r.name.StartsWith("Road Intersection") || r.name.StartsWith("Road T_Intersection")))
             .Select(r =>

@@ -32,11 +32,21 @@ public class VehicleCameraFollow : MonoBehaviour
         set { target = value; SnapToTarget(); }
     }
 
+    /// Changes how far behind / how high the camera sits (e.g. closer for a scooter than for a car).
+    public void SetFraming(float newDistance, float newHeight, float newLookHeight)
+    {
+        distance = newDistance;
+        height = newHeight;
+        lookHeight = newLookHeight;
+    }
+
     private void Start() => SnapToTarget();
 
     private void LateUpdate()
     {
         if (target == null) return;
+        Vector3 tp = target.position;
+        if (!float.IsFinite(tp.x) || !float.IsFinite(tp.y) || !float.IsFinite(tp.z)) return;
         float dt = Time.deltaTime;
 
         Vector3 forward = Vector3.ProjectOnPlane(target.forward, Vector3.up);

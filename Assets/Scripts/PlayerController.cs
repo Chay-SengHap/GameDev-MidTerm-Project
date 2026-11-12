@@ -5,7 +5,7 @@ using UnityEngine.InputSystem;
 /// <summary>
 /// Physics-based (Rigidbody) third-person character controller.
 ///   WASD          - move (relative to the camera)
-///   Left Shift    - run
+///   Left Shift    - run (on its own it runs forward, no W needed)
 ///   Space         - jump (short crouch wind-up, coyote time and jump buffering for a natural feel)
 ///   C / Left Ctrl - crouch (C toggles, Ctrl holds)
 ///   Mouse         - orbit the camera,  Esc - free the cursor
@@ -131,6 +131,8 @@ public class PlayerController : MonoBehaviour
         if (keyboard.sKey.isPressed) input.y -= 1f;
         if (keyboard.dKey.isPressed) input.x += 1f;
         if (keyboard.aKey.isPressed) input.x -= 1f;
+        running = keyboard.leftShiftKey.isPressed;
+        if (running && input == Vector2.zero) input.y = 1f;   // Shift alone = run straight ahead
         input = Vector2.ClampMagnitude(input, 1f);
 
         Vector3 forward = Vector3.forward;
@@ -141,7 +143,6 @@ public class PlayerController : MonoBehaviour
             right = Vector3.ProjectOnPlane(cameraTransform.right, Vector3.up).normalized;
         }
         moveDir = forward * input.y + right * input.x;
-        running = keyboard.leftShiftKey.isPressed;
 
         if (keyboard.spaceKey.wasPressedThisFrame)
             lastJumpPressTime = Time.time;   // buffered, consumed in FixedUpdate
