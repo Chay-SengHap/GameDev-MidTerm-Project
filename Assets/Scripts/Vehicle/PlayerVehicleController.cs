@@ -14,7 +14,7 @@ using UnityEngine;
 /// </summary>
 [RequireComponent(typeof(Rigidbody), typeof(VehicleInput))]
 [DisallowMultipleComponent]
-public class PlayerVehicleController : MonoBehaviour
+public class PlayerVehicleController : PlayerVehicle
 {
     [Serializable]
     public class Axle
@@ -69,13 +69,9 @@ public class PlayerVehicleController : MonoBehaviour
     private float currentSteerAngle;
     private Quaternion[] leftVisualOffset, rightVisualOffset;
 
-    /// Set to false to lock the car in place (e.g. before the start or after game over).
-    public bool ControlsEnabled { get; set; } = true;
-
     /// Signed speed along the car's forward axis (m/s), negative while reversing.
-    public float ForwardSpeed => rb != null ? Vector3.Dot(rb.linearVelocity, transform.forward) : 0f;
-    public float SpeedKmh => Mathf.Abs(ForwardSpeed) * 3.6f;
-    public Rigidbody Body => rb;
+    public override float ForwardSpeed => rb != null ? Vector3.Dot(rb.linearVelocity, transform.forward) : 0f;
+    public override Rigidbody Body => rb;
 
     private void Awake()
     {
@@ -148,7 +144,7 @@ public class PlayerVehicleController : MonoBehaviour
     public void SetAxles(Axle[] newAxles) => axles = newAxles ?? Array.Empty<Axle>();
 
     /// Puts the car upright at its current position, keeping its heading.
-    public void ResetOntoWheels()
+    public override void ResetOntoWheels()
     {
         Vector3 flatForward = Vector3.ProjectOnPlane(transform.forward, Vector3.up);
         if (flatForward.sqrMagnitude < 0.01f) flatForward = Vector3.forward;
@@ -156,7 +152,7 @@ public class PlayerVehicleController : MonoBehaviour
     }
 
     /// Moves the car and removes all its momentum.
-    public void Teleport(Vector3 position, Quaternion rotation)
+    public override void Teleport(Vector3 position, Quaternion rotation)
     {
         rb.linearVelocity = Vector3.zero;
         rb.angularVelocity = Vector3.zero;

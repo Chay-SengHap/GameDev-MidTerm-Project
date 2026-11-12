@@ -13,7 +13,7 @@ public class UIManager : MonoBehaviour
     [SerializeField] private CountdownTimer timer;
     [SerializeField] private CheckpointManager checkpoints;
     [SerializeField] private NavigationArrow navigation;
-    [SerializeField] private PlayerVehicleController vehicle;
+    [SerializeField] private PlayerVehicle vehicle;
 
     [Header("HUD")]
     [SerializeField] private Text timerText;

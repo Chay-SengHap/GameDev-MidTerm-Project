@@ -16,7 +16,7 @@ public class GameManager : MonoBehaviour
     [Header("Systems")]
     [SerializeField] private CountdownTimer timer;
     [SerializeField] private CheckpointManager checkpoints;
-    [SerializeField] private PlayerVehicleController player;
+    [SerializeField] private PlayerVehicle player;
     [Tooltip("Optional. Leave empty to disable crash penalties.")]
     [SerializeField] private VehicleCollisionHandler playerCollisions;
 
