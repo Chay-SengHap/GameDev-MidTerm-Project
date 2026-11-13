@@ -22,7 +22,7 @@ using UnityEngine.UI;
 [DefaultExecutionOrder(100)]
 public class GameMenu : MonoBehaviour
 {
-    [SerializeField] private string gameTitle = "CITY COURIER";
+    [SerializeField] private string gameTitle = "DELIVERY RUSH";
     [SerializeField] private string subtitle = "Deliver across the city";
     [SerializeField] private bool showMainMenuOnStart = true;
     [SerializeField] private Color accent = new Color(1f, 0.62f, 0.1f);
