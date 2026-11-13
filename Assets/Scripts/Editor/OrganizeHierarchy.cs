@@ -13,7 +13,8 @@ using UnityEngine.SceneManagement;
 ///   Game Systems           GameManager, route, traffic system, HUD, event system
 ///   Player                 the scooter with the courier (and any on-foot character)
 ///   City
-///     Roads / Buildings / Nature / Props / Boxes   - each split by type ("Street Light", "Fir Tree"...)
+///     Roads / Nature / Props / Boxes   - each split by type ("Street Light", "Fir Tree"...)
+///     Buildings                        - split into Houses / Shops & Services / Skyscrapers
 ///   Traffic                parked / driving cars, split by type ("Taxi", "SUV"...)
 ///   Other                  anything that doesn't match
 ///
@@ -86,9 +87,18 @@ public static class OrganizeHierarchy
 
         foreach (var (prefix, folder) in CityPrefixes)
             if (name.StartsWith(prefix))
-                return folder == "Buildings" ? new[] { "City", folder } : new[] { "City", folder, TypeName(name, prefix) };
+                return folder == "Buildings" ? new[] { "City", folder, BuildingKind(name) } : new[] { "City", folder, TypeName(name, prefix) };
 
         return new[] { "Other" };
+    }
+
+    /// Buildings are mostly one of a kind, so they are grouped by kind instead of one folder per model.
+    private static string BuildingKind(string name)
+    {
+        string n = name.ToLowerInvariant();
+        if (n.StartsWith("building sky")) return "Skyscrapers";
+        if (n.Contains("house") || n.Contains("residential")) return "Houses";
+        return "Shops & Services";
     }
 
     /// "Props_Street Light (12)" -> "Street Light", "Vehicle_SUV_color02 (3)" -> "SUV", "Road Lane_01 (7)" -> "Lane_01".

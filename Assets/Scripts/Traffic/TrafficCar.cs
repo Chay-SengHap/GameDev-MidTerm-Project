@@ -75,6 +75,12 @@ public class TrafficCar : MonoBehaviour
     private float hardBlockedTimer, backUpTimer;
     private TrafficCar hardBlocker;
 
+    // Anti-gridlock (see TrafficSystem "Anti-gridlock")
+    /// True while blocked by the player, or queued behind a car that is.
+    public bool QueuedBehindPlayer { get; private set; }
+    private float jamTimer, clearRun, junctionHoldTimer, ghostTimer;
+    private TrafficCar ghostThrough;   // a stuck car we are allowed to drive past
+
     // Visuals
     private Renderer[] brakeLights, leftIndicators, rightIndicators;
     private bool brakeOn;
@@ -269,11 +275,23 @@ public class TrafficCar : MonoBehaviour
                 backUpTimer = 2f;
                 hardBlockedTimer = 0f;
             }
+            else
+            {
+                ResolveJam(blocker, dt);
+            }
         }
         else if (step > 0f)
         {
             hardBlockedTimer = 0f;
             hardBlocker = null;
+            clearRun += step;
+            if (clearRun > 3f) jamTimer = 0f;   // really moving again
+        }
+
+        if (ghostTimer > 0f)
+        {
+            ghostTimer -= dt;
+            if (ghostTimer <= 0f) ghostThrough = null;
         }
 
         if (backUpTimer > 0f)
@@ -529,11 +547,15 @@ public class TrafficCar : MonoBehaviour
             }
         }
 
+        QueuedBehindPlayer = blockedByPlayer || (leaderCar != null && leaderCar.QueuedBehindPlayer);
+
         // Traffic light: treat the stop line as a stopped car.
         bool redLight = MustStopAtLight();
-        if (redLight)
+        // Don't enter a junction we can't get out of (it would lock the cross traffic).
+        bool junctionHold = !redLight && JunctionBlockedAhead(dt);
+        if (redLight || junctionHold)
             a = Mathf.Min(a, FollowAccel(Mathf.Max(stopLineDist, 0.01f), 0f, desired));
-        WaitingAtLight = speed < 1f && (redLight || (leaderCar != null && leaderCar.WaitingAtLight));
+        WaitingAtLight = speed < 1f && (redLight || junctionHold || (leaderCar != null && leaderCar.WaitingAtLight));
 
         a = Mathf.Clamp(a, -sys.braking, maxAccel);
 
@@ -542,7 +564,7 @@ public class TrafficCar : MonoBehaviour
         if (speed < 0.2f && a <= 0.05f && !WaitingAtLight)
         {
             blockedTimer += dt;
-            if (blockedTimer > sys.patience && !blockedByPlayer)
+            if (blockedTimer > sys.patience && !blockedByPlayer && !QueuedBehindPlayer)
             {
                 ignoreObstaclesTimer = 1.5f;
                 blockedTimer = 0f;
@@ -602,6 +624,7 @@ public class TrafficCar : MonoBehaviour
         {
             var h = obstacleHits[i];
             if (h.collider.transform.IsChildOf(transform)) continue;   // ourselves
+            if (IsGhostPartner(h.collider.attachedRigidbody)) continue;  // passing a stuck car
             float d = h.distance;
             if (d <= 0f)
             {
@@ -643,6 +666,7 @@ public class TrafficCar : MonoBehaviour
         foreach (var other in AllCars)
         {
             if (other == this || other.rb == null || !other.isActiveAndEnabled) continue;
+            if (other == ghostThrough || other.ghostThrough == this) continue;   // passing a stuck car
             other.Footprint(other.rb.position, other.rb.rotation, out Vector3 oc, out Vector3 of, out Vector3 or);
 
             float reach = footprintRadius + other.footprintRadius + OverlapMargin * 2f;
@@ -685,6 +709,103 @@ public class TrafficCar : MonoBehaviour
     }
 
     private static Vector3 Flat(Vector3 v) => new Vector3(v.x, 0f, v.z);
+
+    // ---------------------------------------------------------------- anti-gridlock
+
+    /// Hard-blocked by 'blocker' this step. Handles jams the two-car rule above doesn't:
+    ///  - a ring of 3+ cars blocking each other: the highest-ID car in the ring backs up;
+    ///  - blocked by a car that isn't moving: back up a little, and if that doesn't clear it, drive past it.
+    /// Cars waiting at a red light or queued behind the player are left alone.
+    private void ResolveJam(TrafficCar blocker, float dt)
+    {
+        clearRun = 0f;
+        jamTimer += dt;
+        if (blocker == null || backUpTimer > 0f) return;
+
+        if (hardBlockedTimer > 2.5f && YieldsInBlockRing())
+        {
+            backUpTimer = 2f;
+            hardBlockedTimer = 0f;
+            return;
+        }
+
+        bool blockerStuck = blocker.speed < 0.2f && !blocker.WaitingAtLight && !blocker.QueuedBehindPlayer;
+        if (!blockerStuck) return;
+
+        if (jamTimer > sys.jamPassAfter)
+        {
+            ghostThrough = blocker;
+            ghostTimer = 4f;
+            jamTimer = 0f;
+            hardBlockedTimer = 0f;
+        }
+        else if (hardBlockedTimer > sys.jamBackUpTime)
+        {
+            backUpTimer = 1f;
+            hardBlockedTimer = 0f;
+        }
+    }
+
+    /// Follows the chain "I'm blocked by A, A by B, ..." - true if it comes back to this car
+    /// and this car has the highest instance ID in the ring (so exactly one car yields).
+    private bool YieldsInBlockRing()
+    {
+        int id = GetInstanceID();
+        TrafficCar c = hardBlocker;
+        for (int i = 0; i < 8 && c != null; i++)
+        {
+            if (c == this) return true;
+            if (c.speed > 0.2f || c.GetInstanceID() > id) return false;
+            c = c.hardBlocker;
+        }
+        return false;
+    }
+
+    private bool IsGhostPartner(Rigidbody body)
+    {
+        if (body == null) return false;
+        if (ghostThrough != null && body == ghostThrough.rb) return true;
+        var other = body.GetComponent<TrafficCar>();
+        return other != null && other.ghostThrough == this;
+    }
+
+    /// "Don't block the box": before the stop line of a junction, true while a stopped car is inside the junction
+    /// or the lane straight across is full. Gives up after TrafficSystem.maxJunctionHold so it can't deadlock.
+    private bool JunctionBlockedAhead(float dt)
+    {
+        if (!sys.dontBlockJunctions || lightAhead == null || (state == State.Turning && turnDelay <= 0f) ||
+            stopLineDist < 0f || stopLineDist > 15f)
+        {
+            junctionHoldTimer = 0f;
+            return false;
+        }
+        if (junctionHoldTimer > sys.maxJunctionHold) return false;
+
+        float half = lightAhead.stopLineDistance;
+        Vector3 c = lightAhead.Center;
+        Vector3 r = Right(heading);
+        bool blocked = false;
+        foreach (var other in AllCars)
+        {
+            if (other == this || other.rb == null || !other.isActiveAndEnabled || other.speed > 1f) continue;
+            Vector3 p = other.rb.position;
+            Vector3 rel = p - c;
+            if (Mathf.Abs(rel.x) < half - 0.5f && Mathf.Abs(rel.z) < half - 0.5f) { blocked = true; break; }
+
+            // Our exit lane right after the junction, with no room left for us.
+            float along = Vector3.Dot(rel, heading);
+            float side = Vector3.Dot(p - pos, r);
+            if (along > half && along < half + halfLength * 2f + minGap && Mathf.Abs(side) < halfWidth + 1f &&
+                Vector3.Dot(other.Direction, heading) > 0.7f)
+            {
+                blocked = true;
+                break;
+            }
+        }
+        if (blocked) junctionHoldTimer += dt;
+        else junctionHoldTimer = 0f;
+        return blocked;
+    }
 
     // ---------------------------------------------------------------- helpers
     private static Vector3 Right(Vector3 h) => Vector3.Cross(Vector3.up, h);

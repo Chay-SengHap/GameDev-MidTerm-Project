@@ -43,6 +43,16 @@ public class TrafficSystem : MonoBehaviour
     [Range(0f, 0.5f)] public float driverVariation = 0.15f; // how much speed/gaps differ between drivers
     public bool honkAtPlayer = true;
 
+    [Header("Anti-gridlock")]
+    [Tooltip("Wait at the stop line while a stopped car is inside the junction or our exit lane is full.")]
+    public bool dontBlockJunctions = true;
+    [Tooltip("Fail-safe: never hold at a free light longer than this (s).")]
+    public float maxJunctionHold = 6f;
+    [Tooltip("Blocked nose-to-bumper by a car that isn't moving for this long (s): back up a little.")]
+    public float jamBackUpTime = 3f;
+    [Tooltip("Still jammed behind the same stopped car after this long (s): drive past it.")]
+    public float jamPassAfter = 10f;
+
     [Header("Traffic lights")]
     public bool trafficLights = true;
     public float greenTime = 12f;

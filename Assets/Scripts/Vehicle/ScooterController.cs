@@ -32,8 +32,8 @@ public class ScooterController : PlayerVehicle
     [Tooltip("Acceleration from standstill (m/s²). Falls off towards top speed.")]
     [SerializeField] private float acceleration = 5.5f;
     [Tooltip("Pushing the scooter backwards with the feet.")]
-    [SerializeField] private float maxReverseSpeedKmh = 5f;
-    [SerializeField] private float reverseAcceleration = 1.5f;
+    [SerializeField] private float maxReverseSpeedKmh = 12f;
+    [SerializeField] private float reverseAcceleration = 3.5f;
 
     [Header("Brakes & Drag")]
     [SerializeField] private float brakeDeceleration = 9f;
