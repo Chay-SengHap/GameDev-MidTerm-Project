@@ -138,6 +138,7 @@ public class ScooterController : PlayerVehicle
     private VehicleInput input;
     private ScooterRiderPose riderPose;
     private ScooterRiderMotion riderMotion;
+    private DeliveryPackageController deliveryPackages;
     private Transform riderRoot;
 
     // Rig
@@ -201,6 +202,9 @@ public class ScooterController : PlayerVehicle
         riderPose = GetComponentInChildren<ScooterRiderPose>();
         FindRider();
         BuildRig();
+        deliveryPackages = GetComponent<DeliveryPackageController>();
+        if (deliveryPackages == null) deliveryPackages = gameObject.AddComponent<DeliveryPackageController>();
+        deliveryPackages.Bind(this, riderRoot);
         SetUpPhysics();
         Vector3 start = SafeSpot(transform.position);
         transform.position = start;
@@ -545,7 +549,7 @@ public class ScooterController : PlayerVehicle
         if (canAct && input.InteractPressed && riderRoot != null)
         {
             if (IsMounted) TryGetOff();
-            else TryGetOn();
+            else if (deliveryPackages == null || !deliveryPackages.TryInteract()) TryGetOn();
         }
         if (input.LightTogglePressed && IsMounted) headlightOn = !headlightOn;
 

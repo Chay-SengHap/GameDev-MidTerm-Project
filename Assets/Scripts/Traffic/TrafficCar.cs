@@ -4,7 +4,7 @@ using UnityEngine;
 /// <summary>
 /// A self-driving car. Added automatically to every vehicle by <see cref="TrafficSystem"/>.
 ///  - Keeps to the right lane by holding a fixed distance from the right curb.
-///  - At junctions it randomly goes straight, turns right or turns left (if that road exists).
+///  - At junctions it follows a route to a reachable destination.
 ///  - Follows bends, makes a U-turn at dead ends.
 ///  - Obeys traffic lights: stops at the stop line on red, and on yellow if it can stop comfortably.
 ///  - Car-following uses the Intelligent Driver Model (as used in traffic simulation): it matches the
@@ -41,6 +41,7 @@ public class TrafficCar : MonoBehaviour
 
     // Sensing results
     private float curbDist = -1f;   // distance from the centre line to the right curb (-1 = none, junction)
+    private float smoothedCurbDist = -1f;
     private float leftDist = -1f;
     private float aheadDist = -1f;  // distance to the end of the road ahead (-1 = road continues)
     private float roadWidth = 13f;
@@ -61,11 +62,11 @@ public class TrafficCar : MonoBehaviour
     private float currentTurnRadius;
 
     // Obstacles
-    private float blockedTimer, ignoreObstaclesTimer;
+    private float blockedTimer;
     private bool blockedByPlayer;
     private float hornCooldown;
     private AudioSource horn;
-    private readonly RaycastHit[] obstacleHits = new RaycastHit[16];
+    private readonly RaycastHit[] obstacleHits = new RaycastHit[32];
 
     // Hard no-overlap check against every other car (see WouldOverlapCar).
     private static readonly List<TrafficCar> AllCars = new List<TrafficCar>();
@@ -74,12 +75,22 @@ public class TrafficCar : MonoBehaviour
     private float footprintRadius = 4f;           // for a quick distance reject
     private float hardBlockedTimer, backUpTimer;
     private TrafficCar hardBlocker;
+    private bool initialized;
+    private float stalledTime;
+    private Vector3 lastProgressPosition;
 
     // Anti-gridlock (see TrafficSystem "Anti-gridlock")
     /// True while blocked by the player, or queued behind a car that is.
     public bool QueuedBehindPlayer { get; private set; }
-    private float jamTimer, clearRun, junctionHoldTimer, ghostTimer;
-    private TrafficCar ghostThrough;   // a stuck car we are allowed to drive past
+    private TrafficIntersection plannedJunction;
+    private Vector3 plannedExit;
+    private float plannedExitSide;
+    private readonly Collider[] footprintHits = new Collider[32];
+    private readonly List<TrafficIntersection> route = new List<TrafficIntersection>();
+    private TrafficIntersection lastJunction;
+    private TrafficIntersection previousDestination;
+    private TrafficIntersection unroutableJunction;
+    private bool roadBlocked;
 
     // Visuals
     private Renderer[] brakeLights, leftIndicators, rightIndicators;
@@ -88,12 +99,14 @@ public class TrafficCar : MonoBehaviour
     private static readonly Color TailRed = new Color(1f, 0.05f, 0.02f);
     private static readonly Color Amber = new Color(1f, 0.55f, 0f);
 
-    private void Start()
-    {
-        sys = TrafficSystem.Instance;
-        if (sys == null) { enabled = false; return; }
+    private void Start() => Initialize(0f);
 
-        MeasureSize();
+    internal bool Initialize(float spacing)
+    {
+        if (initialized) return true;
+        initialized = true;
+        sys = TrafficSystem.Instance;
+        if (sys == null) { enabled = false; return false; }
 
         // Every driver is a little different.
         float v = sys.driverVariation;
@@ -115,21 +128,28 @@ public class TrafficCar : MonoBehaviour
             if (settings.Behaviour == TrafficBehaviour.Stationary)
             {
                 state = State.Parked;   // stays exactly where it was placed, as a solid obstacle
-                return;
+                return true;
             }
         }
 
+        sinceManeuver = 6f;
         senseTimer = Random.Range(0f, sys.senseInterval);   // spread sensing over frames
-        if (!PlaceOnRoad())
+        if (!PlaceOnRoad(spacing))
         {
-            state = State.Parked;   // no road nearby: stays parked
-            return;
+            // A failed lane placement could leave a solid vehicle across an intersection.
+            gameObject.SetActive(false);
+            return false;
         }
+        lastProgressPosition = pos;
         CreateLights();
         Sense();
+        Decide();
+        return true;
     }
 
     // ---------------------------------------------------------------- setup
+    private void Awake() => MeasureSize();
+
     private void MeasureSize()
     {
         // Size of all meshes in the car's own space (independent of its current rotation).
@@ -193,7 +213,7 @@ public class TrafficCar : MonoBehaviour
         foreach (var r in rightIndicators) { r.sharedMaterial = TrafficSystem.LampMaterial(Amber, true); r.enabled = false; }
     }
 
-    private bool PlaceOnRoad()
+    private bool PlaceOnRoad(float spacing)
     {
         pos = transform.position;
         pos.y = 0f;
@@ -230,12 +250,85 @@ public class TrafficCar : MonoBehaviour
 
         // Move into the right-hand lane.
         float curb = ScanEdge(pos, Right(heading), sys.maxCurbScan);
-        if (curb > 0f) pos += Right(heading) * (curb - sys.laneOffsetFromCurb);
+        if (curb > 0f)
+        {
+            pos += Right(heading) * (curb - sys.laneOffsetFromCurb);
+            smoothedCurbDist = sys.laneOffsetFromCurb;
+        }
 
-        transform.SetPositionAndRotation(pos, CarRotation());
-        rb.position = pos;
-        rb.rotation = CarRotation();
+        Vector3 lane = pos;
+        Quaternion rotation = CarRotation();
+        // Placed models often start at the corner or next to another car. Try the same lane nearby.
+        for (int i = 0; i <= 8; i++)
+        {
+            float offset = (i + 1) / 2 * 4f * (i % 2 == 0 ? 1f : -1f);
+            Vector3 candidate = lane + heading * offset;
+            if (!CanStartAt(candidate, rotation, heading, spacing)) continue;
+            SetPose(candidate, rotation);
+            return true;
+        }
+        return false;
+    }
+
+    private bool CanStartAt(Vector3 point, Quaternion rotation, Vector3 forward, float spacing)
+    {
+        if (SpawnOverlapsJunction(point, rotation) || !OnRoad(point, rotation) ||
+            !OnRoad(point + forward * 4f, rotation) || HitsObstacle(point, rotation) ||
+            WouldOverlapCar(point, rotation, out _, allowSeparation: false)) return false;
+
+        foreach (var other in AllCars)
+        {
+            if (other == this || other.rb == null || other.state == State.Parked ||
+                other.gameObject.scene != gameObject.scene || Vector3.Dot(forward, other.heading) < 0.9f)
+                continue;
+            Vector3 delta = Flat(other.pos - point);
+            if (Mathf.Abs(Vector3.Dot(delta, Right(forward))) < halfWidth + other.halfWidth &&
+                Mathf.Abs(Vector3.Dot(delta, forward)) < spacing) return false;
+        }
         return true;
+    }
+
+    private void SetPose(Vector3 point, Quaternion rotation)
+    {
+        pos = point;
+        rb.position = point;
+        rb.rotation = rotation;
+        transform.SetPositionAndRotation(point, rotation);
+    }
+
+    internal bool TryRejoinAt(Pose start, float spacing)
+    {
+        Vector3 forward = start.rotation * (sys.modelFacesPositiveZ ? Vector3.forward : Vector3.back);
+        if (!CanStartAt(start.position, start.rotation, forward, spacing)) return false;
+
+        heading = forward;
+        yaw = HeadingYaw(heading);
+        SetPose(start.position, start.rotation);
+        state = State.Cruise;
+        speed = accel = pitch = roll = 0f;
+        hardBlockedTimer = backUpTimer = 0f;
+        hardBlocker = null;
+        WaitingAtLight = QueuedBehindPlayer = roadBlocked = false;
+        plannedJunction = lastJunction = unroutableJunction = goingThroughOnYellow = null;
+        route.Clear();
+        sinceManeuver = 6f;
+        smoothedCurbDist = -1f;
+        lastProgressPosition = pos;
+        Sense();
+        Decide();
+        return true;
+    }
+
+    private bool SpawnOverlapsJunction(Vector3 point, Quaternion rotation)
+    {
+        Footprint(point, rotation, out Vector3 center, out Vector3 forward, out Vector3 right);
+        foreach (var junction in sys.Intersections)
+        {
+            float half = junction.stopLineDistance;
+            if (Overlaps(center, forward, right, halfLength, halfWidth,
+                junction.Center, Vector3.forward, Vector3.right, half, half)) return true;
+        }
+        return false;
     }
 
     // ---------------------------------------------------------------- per physics step
@@ -250,57 +343,89 @@ public class TrafficCar : MonoBehaviour
             senseTimer = sys.senseInterval;
             Sense();
             Decide();
+            if ((pos - lastProgressPosition).sqrMagnitude >= 3f * 3f || QueuedBehindPlayer)
+            {
+                lastProgressPosition = pos;
+                stalledTime = 0f;
+            }
+            else
+            {
+                stalledTime += sys.senseInterval;
+                // Allow a full signal cycle for queues, but recover sooner from a failed manoeuvre.
+                bool signalQueue = WaitingAtLight && !roadBlocked && hardBlockedTimer < sys.jamBackUpTime;
+                float timeout = signalQueue ? 2f * (sys.greenTime + sys.yellowTime + sys.allRedTime) + 8f : 9f;
+                if (stalledTime > timeout)
+                {
+                    stalledTime = timeout - 2f;
+                    if (sys.TryRejoinTraffic(this))
+                    {
+                        stalledTime = 0f;
+                        return;
+                    }
+                }
+            }
+        }
+
+        if (backUpTimer > 0f)
+        {
+            backUpTimer -= dt;
+            Vector3 back = pos - Direction * (1.2f * dt);
+            Quaternion rotation = CarRotation();
+            if (CanMove(back, rotation, out _))
+            {
+                stopLineDist += 1.2f * dt;
+                pos = back;
+                rb.MovePosition(pos);
+            }
+            else backUpTimer = 0f;
+            return;
         }
 
         float prevYaw = yaw;
-        Steer(dt);
+        float previousTurnRemaining = turnRemaining;
+        float previousTurnDelay = turnDelay;
+        Vector3 previousHeading = heading;
+        State previousState = state;
+        float previousDistance = sinceManeuver;
+        float previousCurb = curbDist;
+        float previousSmoothedCurb = smoothedCurbDist;
         UpdateSpeed(dt);
+        Steer(dt);
 
-        Vector3 dir = Quaternion.Euler(0f, yaw, 0f) * Vector3.forward;
+        float travelYaw = previousState == State.Turning && previousTurnDelay <= 0f
+            ? Mathf.LerpAngle(prevYaw, yaw, 0.5f) : yaw;
+        Vector3 dir = Quaternion.Euler(0f, travelYaw, 0f) * Vector3.forward;
         float step = speed * dt;
 
-        // Never drive into another car: if this step would make the outlines overlap, stay put.
-        if (step > 0f && WouldOverlapCar(pos + dir * step, CarRotation(), out TrafficCar blocker))
+        if (step > 0f && !CanMove(pos + dir * step, CarRotation(), out TrafficCar blocker))
         {
             step = 0f;
             speed = 0f;
             accel = -sys.braking;
+            yaw = prevYaw;
+            turnRemaining = previousTurnRemaining;
+            turnDelay = previousTurnDelay;
+            heading = previousHeading;
+            state = previousState;
+            sinceManeuver = previousDistance;
+            curbDist = previousCurb;
+            smoothedCurbDist = previousSmoothedCurb;
             hardBlocker = blocker;
             hardBlockedTimer += dt;
 
-            // Two cars blocking each other (e.g. nose to nose in a junction): the lower-priority one backs up.
-            if (hardBlockedTimer > 2.5f && blocker != null && blocker.hardBlocker == this &&
-                GetInstanceID() > blocker.GetInstanceID())
+            if (blocker != null && !WaitingAtLight && hardBlockedTimer > sys.jamBackUpTime &&
+                YieldsInBlockRing())
             {
                 backUpTimer = 2f;
                 hardBlockedTimer = 0f;
-            }
-            else
-            {
-                ResolveJam(blocker, dt);
             }
         }
         else if (step > 0f)
         {
             hardBlockedTimer = 0f;
             hardBlocker = null;
-            clearRun += step;
-            if (clearRun > 3f) jamTimer = 0f;   // really moving again
         }
 
-        if (ghostTimer > 0f)
-        {
-            ghostTimer -= dt;
-            if (ghostTimer <= 0f) ghostThrough = null;
-        }
-
-        if (backUpTimer > 0f)
-        {
-            backUpTimer -= dt;
-            Vector3 back = pos - dir * (1.2f * dt);
-            if (!WouldOverlapCar(back, CarRotation(), out _)) pos = back;
-            else backUpTimer = 0f;
-        }
         pos += dir * step;
         sinceManeuver += step;
         stopLineDist -= step;
@@ -360,7 +485,19 @@ public class TrafficCar : MonoBehaviour
     {
         Vector3 r = Right(heading);
         Vector3 probe = pos + heading * (halfLength * 0.3f);
-        curbDist = ScanEdge(probe, r, sys.maxCurbScan);
+        float measuredCurbDist = ScanEdge(probe, r, sys.maxCurbScan);
+        if (measuredCurbDist > 0f)
+        {
+            smoothedCurbDist = smoothedCurbDist > 0f
+                ? Mathf.Lerp(smoothedCurbDist, measuredCurbDist, 0.25f)
+                : measuredCurbDist;
+            curbDist = smoothedCurbDist;
+        }
+        else
+        {
+            curbDist = -1f;
+            smoothedCurbDist = -1f;
+        }
         // The left side is only needed for turn decisions, so scan it less often (saves raycasts).
         if (senseCount++ % 5 == 0 || curbDist < 0f)
         {
@@ -372,13 +509,14 @@ public class TrafficCar : MonoBehaviour
 
         // Next traffic light on our road.
         lightAhead = null;
-        if (sys.trafficLights && (state != State.Turning || turnDelay > 0f))
+        if (state != State.Turning || turnDelay > 0f)
         {
-            var ti = sys.IntersectionAhead(pos, heading, 70f, out float d);
+            var ti = sys.IntersectionAhead(pos, heading, 70f, out float d,
+                state == State.Crossing ? lastJunction : null);
             if (ti != null)
             {
                 lightAhead = ti;
-                stopLineDist = d - halfLength;
+                stopLineDist = d - halfLength - Vector3.Dot(CarRotation() * footprintOffset, heading);
             }
         }
     }
@@ -401,6 +539,10 @@ public class TrafficCar : MonoBehaviour
     // ---------------------------------------------------------------- decisions
     private void Decide()
     {
+        roadBlocked = false;
+        if (state == State.Cruise && TryFollowRoute()) return;
+        if ((MustStopAtLight() || JunctionBlockedAhead()) && stopLineDist < 6f) return;
+
         switch (state)
         {
             case State.Cruise:
@@ -429,48 +571,97 @@ public class TrafficCar : MonoBehaviour
         float leftReach = (leftDist > 0f ? leftDist : roadWidth - lane) + 6f;
         bool canLeft = sys.IsRoad(pos + heading * (crossWidth * 0.5f) - r * leftReach);
 
-        float roll = Random.value;
-        if (canStraight && (roll < sys.chanceStraight || (!canLeft && roll < 0.65f)))
+        float rightRadius = Mathf.Max(sys.minTurnRadius, lane);
+        float leftRadius = Mathf.Max(sys.turnRadius, crossWidth - lane);
+        if (canStraight)
         {
             state = State.Crossing;
             sinceManeuver = 0f;
         }
-        else if (canLeft && (Random.value < 0.5f))
-        {
-            float radius = sys.turnRadius;
-            StartTurn(-1f, 90f, radius, Mathf.Max(0f, crossWidth - lane - radius));
-        }
-        else
-        {
-            // Right turn: circle around the corner at lane distance so we end up in the new right lane.
-            float radius = Mathf.Max(sys.minTurnRadius, lane);
-            StartTurn(+1f, 90f, radius, 0f);
-        }
+        else roadBlocked = !TryTurn(1f, 90f, rightRadius) && !(canLeft && TryTurn(-1f, 90f, leftRadius));
     }
 
     private void AtRoadEnd()
     {
-        Vector3 r = Right(heading);
-        leftDist = ScanEdge(pos + heading * (halfLength * 0.3f), -r, sys.maxCurbScan * 1.5f);
         float lane = sys.laneOffsetFromCurb;
-        float leftReach = (leftDist > 0f ? leftDist : roadWidth - lane) + 5f;
-        bool canLeft = sys.IsRoad(pos + heading * Mathf.Max(aheadDist - lane, 0f) - r * leftReach);
+        if (TryTurn(-1f, 90f, Mathf.Max(sys.turnRadius, aheadDist - lane)) ||
+            TryTurn(1f, 90f, Mathf.Max(sys.minTurnRadius, lane))) return;
 
-        if (canLeft)
+        float radius = Mathf.Max(sys.minTurnRadius * 0.8f, (roadWidth - 2f * lane) * 0.5f);
+        if (!TryTurn(-1f, 180f, radius) && aheadDist < halfLength + 3f)
+            roadBlocked = true;
+    }
+
+    private bool TryFollowRoute()
+    {
+        TrafficIntersection junction = lightAhead;
+        if (junction == null || junction == lastJunction || junction == unroutableJunction) return false;
+        if (route.Count < 2 || route[0] != junction)
         {
-            float radius = sys.turnRadius;
-            StartTurn(-1f, 90f, radius, Mathf.Max(0f, aheadDist - lane - radius));
+            var destination = sys.PlanRoute(junction, heading, previousDestination, route);
+            if (destination != null) previousDestination = destination;
+            else unroutableJunction = junction;
+        }
+        if (route.Count < 2) return false;
+
+        var next = route[1];
+        Vector3 delta = next.Center - junction.Center;
+        Vector3 outgoing = Mathf.Abs(delta.x) > Mathf.Abs(delta.z)
+            ? Vector3.right * Mathf.Sign(delta.x) : Vector3.forward * Mathf.Sign(delta.z);
+        if (plannedJunction != junction || plannedExit != outgoing)
+        {
+            plannedJunction = junction;
+            plannedExit = outgoing;
+            Vector3 probe = junction.Center + outgoing * (junction.stopLineDistance + 3f);
+            float exitCurb = ScanEdge(probe, Right(outgoing), sys.maxCurbScan);
+            plannedExitSide = exitCurb > 0f ? exitCurb - sys.laneOffsetFromCurb : 0f;
+        }
+        float turn = Vector3.Dot(outgoing, Right(heading));
+        float remaining = Vector3.Dot(junction.Center - pos, heading);
+        if (Mathf.Abs(turn) < 0.5f)
+        {
+            if (remaining > 2f || MustStopAtLight() || JunctionBlockedAhead()) return true;
+            state = State.Crossing;
+            sinceManeuver = 0f;
         }
         else
         {
-            // Dead end: U-turn across the road.
-            float radius = Mathf.Max(sys.minTurnRadius * 0.8f, (roadWidth - 2f * lane) * 0.5f);
-            StartTurn(-1f, 180f, radius, 0f);
+            float radius = turn > 0f ? Mathf.Max(sys.minTurnRadius, sys.laneOffsetFromCurb)
+                : Mathf.Max(sys.turnRadius, roadWidth - sys.laneOffsetFromCurb);
+            Vector3 exitLane = junction.Center + Right(outgoing) * plannedExitSide;
+            float startDistance = Vector3.Dot(exitLane - pos, heading) - radius;
+            if (startDistance > 0.75f)
+                return aheadDist < 0f || startDistance + halfLength < aheadDist;
+            if (MustStopAtLight() || JunctionBlockedAhead()) return true;
+            if (!TryTurn(turn, 90f, radius)) return false;
         }
+
+        lastJunction = route[0];
+        route.RemoveAt(0);
+        return true;
+    }
+
+    private bool TryTurn(float sign, float angle, float radius)
+    {
+        if (MustStopAtLight() || JunctionBlockedAhead()) return false;
+        Vector3 forward = heading;
+        Quaternion startRotation = Quaternion.Euler(0f,
+            HeadingYaw(heading) + (sys.modelFacesPositiveZ ? 0f : 180f), 0f);
+        Vector3 right = Right(forward);
+        for (float degrees = 10f; degrees <= angle; degrees += 10f)
+        {
+            float radians = degrees * Mathf.Deg2Rad;
+            Vector3 point = pos + radius * (forward * Mathf.Sin(radians) + right * sign * (1f - Mathf.Cos(radians)));
+            Quaternion rotation = Quaternion.AngleAxis(sign * degrees, Vector3.up) * startRotation;
+            if (!OnRoad(point, rotation) || HitsObstacle(point, rotation, staticOnly: true)) return false;
+        }
+        StartTurn(sign, angle, radius, 0f);
+        return true;
     }
 
     private void StartTurn(float sign, float angle, float radius, float delay)
     {
+        yaw = HeadingYaw(heading);
         turnSign = sign;
         turnRemaining = angle;
         currentTurnRadius = Mathf.Max(radius, 1f);
@@ -505,6 +696,7 @@ public class TrafficCar : MonoBehaviour
                 state = State.Cruise;
                 sinceManeuver = 0f;
                 curbDist = -1f;
+                smoothedCurbDist = -1f;
                 senseTimer = 0f;   // re-sense right away
             }
             return;
@@ -515,9 +707,11 @@ public class TrafficCar : MonoBehaviour
         {
             // Hold the lane: steer toward the right curb if too far from it, away if too close.
             float error = curbDist - sys.laneOffsetFromCurb;
-            target += Mathf.Clamp(error * 6f, -20f, 20f);
+            if (Mathf.Abs(error) < 0.15f) error = 0f;
+            target += Mathf.Clamp(error * 2.5f, -8f, 8f);
         }
-        yaw = Mathf.MoveTowardsAngle(yaw, target, maxYawRate * dt);
+        float steeringRate = state == State.Cruise ? Mathf.Min(maxYawRate, 18f) : maxYawRate;
+        yaw = Mathf.MoveTowardsAngle(yaw, target, steeringRate * dt);
     }
 
     private void UpdateSpeed(float dt)
@@ -533,48 +727,32 @@ public class TrafficCar : MonoBehaviour
         // Car / person / object in front.
         blockedByPlayer = false;
         TrafficCar leaderCar = null;
-        if (ignoreObstaclesTimer > 0f)
+        float gap = DistanceToObstacle(out float leaderSpeed, out bool isPlayer, out leaderCar);
+        if (gap >= 0f)
         {
-            ignoreObstaclesTimer -= dt;
+            a = Mathf.Min(a, FollowAccel(gap, leaderSpeed, desired));
+            blockedByPlayer = isPlayer;
         }
-        else
-        {
-            float gap = DistanceToObstacle(out float leaderSpeed, out bool isPlayer, out leaderCar);
-            if (gap >= 0f)
-            {
-                a = Mathf.Min(a, FollowAccel(gap, leaderSpeed, desired));
-                blockedByPlayer = isPlayer;
-            }
-        }
+        if (roadBlocked) a = -sys.braking;
 
         QueuedBehindPlayer = blockedByPlayer || (leaderCar != null && leaderCar.QueuedBehindPlayer);
 
         // Traffic light: treat the stop line as a stopped car.
         bool redLight = MustStopAtLight();
         // Don't enter a junction we can't get out of (it would lock the cross traffic).
-        bool junctionHold = !redLight && JunctionBlockedAhead(dt);
+        bool junctionHold = !redLight && JunctionBlockedAhead();
         if (redLight || junctionHold)
             a = Mathf.Min(a, FollowAccel(Mathf.Max(stopLineDist, 0.01f), 0f, desired));
         WaitingAtLight = speed < 1f && (redLight || junctionHold || (leaderCar != null && leaderCar.WaitingAtLight));
 
         a = Mathf.Clamp(a, -sys.braking, maxAccel);
 
-        // Stuck for a long time behind something that isn't moving: try to squeeze past.
-        // (The hard outline check in FixedUpdate still stops it from driving into a car.)
-        if (speed < 0.2f && a <= 0.05f && !WaitingAtLight)
-        {
-            blockedTimer += dt;
-            if (blockedTimer > sys.patience && !blockedByPlayer && !QueuedBehindPlayer)
-            {
-                ignoreObstaclesTimer = 1.5f;
-                blockedTimer = 0f;
-            }
-        }
-        else if (!blockedByPlayer) blockedTimer = 0f;
-        else blockedTimer += dt;
+        blockedTimer = blockedByPlayer ? blockedTimer + dt : 0f;
 
         accel = a;
         speed = Mathf.Max(0f, speed + a * dt);
+        if ((redLight || junctionHold) && stopLineDist >= 0f)
+            speed = Mathf.Min(speed, stopLineDist / dt);
     }
 
     /// Intelligent Driver Model interaction term: acceleration when following something 'gap' metres ahead.
@@ -588,7 +766,7 @@ public class TrafficCar : MonoBehaviour
 
     private bool MustStopAtLight()
     {
-        if (lightAhead == null || (state == State.Turning && turnDelay <= 0f)) return false;
+        if (!sys.trafficLights || lightAhead == null || (state == State.Turning && turnDelay <= 0f)) return false;
         if (stopLineDist < -0.5f) return false;                       // already past the line: keep going
 
         LightState light = lightAhead.GetState(Mathf.Abs(heading.z) > 0.5f);
@@ -624,7 +802,6 @@ public class TrafficCar : MonoBehaviour
         {
             var h = obstacleHits[i];
             if (h.collider.transform.IsChildOf(transform)) continue;   // ourselves
-            if (IsGhostPartner(h.collider.attachedRigidbody)) continue;  // passing a stuck car
             float d = h.distance;
             if (d <= 0f)
             {
@@ -647,7 +824,8 @@ public class TrafficCar : MonoBehaviour
             {
                 leaderSpeed = Mathf.Max(0f, Vector3.Dot(body.linearVelocity, dir));
                 isPlayer = body.GetComponent<PlayerController>() != null ||
-                           body.GetComponent<PlayerVehicle>() != null;
+                           body.GetComponent<PlayerVehicle>() != null ||
+                           body.GetComponent<ScooterController>() != null;
             }
         }
         return Mathf.Max(0f, nearest - halfLength);
@@ -655,9 +833,45 @@ public class TrafficCar : MonoBehaviour
 
     // ---------------------------------------------------------------- car-to-car overlap
 
+    private bool CanMove(Vector3 point, Quaternion rotation, out TrafficCar blocker)
+    {
+        return !WouldOverlapCar(point, rotation, out blocker) &&
+            OnRoad(point, rotation) && !HitsObstacle(point, rotation);
+    }
+
+    private bool OnRoad(Vector3 point, Quaternion rotation)
+    {
+        Footprint(point, rotation, out Vector3 center, out Vector3 forward, out Vector3 right);
+        Vector3 length = forward * (halfLength * 0.85f);
+        Vector3 width = right * (halfWidth * 0.9f);
+        return sys.IsRoad(center + length + width) && sys.IsRoad(center + length - width) &&
+            sys.IsRoad(center - length + width) && sys.IsRoad(center - length - width);
+    }
+
+    private bool HitsObstacle(Vector3 point, Quaternion rotation, bool staticOnly = false)
+    {
+        Footprint(point, rotation, out Vector3 center, out Vector3 forward, out _);
+        float bottom = point.y + 0.22f;
+        float top = point.y + Mathf.Max(height, 0.6f);
+        center.y = (bottom + top) * 0.5f;
+        Vector3 halfExtents = new Vector3(halfWidth, (top - bottom) * 0.5f, halfLength);
+        int count = Physics.OverlapBoxNonAlloc(center, halfExtents, footprintHits,
+            Quaternion.LookRotation(forward), ~0, QueryTriggerInteraction.Ignore);
+        for (int i = 0; i < count; i++)
+        {
+            Collider hit = footprintHits[i];
+            if (hit.attachedRigidbody == rb || hit.transform.IsChildOf(transform)) continue;
+            if (staticOnly && hit.attachedRigidbody != null) continue;
+            // Traffic cars are checked against their reserved poses before the physics step.
+            if (hit.attachedRigidbody != null && hit.attachedRigidbody.TryGetComponent<TrafficCar>(out _)) continue;
+            return true;
+        }
+        return count == footprintHits.Length;
+    }
+
     /// Would this car's outline (seen from above, plus a small margin) overlap another car if it moved to nextPos?
     /// Moves that separate two cars which already overlap (e.g. spawned too close) are allowed.
-    private bool WouldOverlapCar(Vector3 nextPos, Quaternion nextRot, out TrafficCar blocker)
+    private bool WouldOverlapCar(Vector3 nextPos, Quaternion nextRot, out TrafficCar blocker, bool allowSeparation = true)
     {
         blocker = null;
         Footprint(nextPos, nextRot, out Vector3 nc, out Vector3 nf, out Vector3 nr);
@@ -665,16 +879,18 @@ public class TrafficCar : MonoBehaviour
 
         foreach (var other in AllCars)
         {
-            if (other == this || other.rb == null || !other.isActiveAndEnabled) continue;
-            if (other == ghostThrough || other.ghostThrough == this) continue;   // passing a stuck car
-            other.Footprint(other.rb.position, other.rb.rotation, out Vector3 oc, out Vector3 of, out Vector3 or);
+            if (other == this || !other.isActiveAndEnabled || other.gameObject.scene != gameObject.scene) continue;
+            bool driving = other.rb != null && other.state != State.Parked;
+            other.Footprint(driving ? other.pos : other.transform.position,
+                driving ? other.CarRotation() : other.transform.rotation,
+                out Vector3 oc, out Vector3 of, out Vector3 or);
 
             float reach = footprintRadius + other.footprintRadius + OverlapMargin * 2f;
             if ((oc - nc).sqrMagnitude > reach * reach) continue;
             if (!Overlaps(nc, nf, nr, halfLength, halfWidth, oc, of, or, other.halfLength, other.halfWidth)) continue;
 
             // Already overlapping now: allow the move if it takes us further apart.
-            if (Overlaps(cc, cf, cr, halfLength, halfWidth, oc, of, or, other.halfLength, other.halfWidth) &&
+            if (allowSeparation && Overlaps(cc, cf, cr, halfLength, halfWidth, oc, of, or, other.halfLength, other.halfWidth) &&
                 Flat(nc - oc).sqrMagnitude > Flat(cc - oc).sqrMagnitude)
                 continue;
 
@@ -699,8 +915,9 @@ public class TrafficCar : MonoBehaviour
     {
         la += OverlapMargin; wa += OverlapMargin; lb += OverlapMargin; wb += OverlapMargin;
         Vector3 d = Flat(cb - ca);
-        foreach (Vector3 axis in new[] { fa, ra, fb, rb })
+        for (int i = 0; i < 4; i++)
         {
+            Vector3 axis = i == 0 ? fa : i == 1 ? ra : i == 2 ? fb : rb;
             float projA = la * Mathf.Abs(Vector3.Dot(fa, axis)) + wa * Mathf.Abs(Vector3.Dot(ra, axis));
             float projB = lb * Mathf.Abs(Vector3.Dot(fb, axis)) + wb * Mathf.Abs(Vector3.Dot(rb, axis));
             if (Mathf.Abs(Vector3.Dot(d, axis)) > projA + projB) return false;   // a gap on this axis
@@ -711,40 +928,6 @@ public class TrafficCar : MonoBehaviour
     private static Vector3 Flat(Vector3 v) => new Vector3(v.x, 0f, v.z);
 
     // ---------------------------------------------------------------- anti-gridlock
-
-    /// Hard-blocked by 'blocker' this step. Handles jams the two-car rule above doesn't:
-    ///  - a ring of 3+ cars blocking each other: the highest-ID car in the ring backs up;
-    ///  - blocked by a car that isn't moving: back up a little, and if that doesn't clear it, drive past it.
-    /// Cars waiting at a red light or queued behind the player are left alone.
-    private void ResolveJam(TrafficCar blocker, float dt)
-    {
-        clearRun = 0f;
-        jamTimer += dt;
-        if (blocker == null || backUpTimer > 0f) return;
-
-        if (hardBlockedTimer > 2.5f && YieldsInBlockRing())
-        {
-            backUpTimer = 2f;
-            hardBlockedTimer = 0f;
-            return;
-        }
-
-        bool blockerStuck = blocker.speed < 0.2f && !blocker.WaitingAtLight && !blocker.QueuedBehindPlayer;
-        if (!blockerStuck) return;
-
-        if (jamTimer > sys.jamPassAfter)
-        {
-            ghostThrough = blocker;
-            ghostTimer = 4f;
-            jamTimer = 0f;
-            hardBlockedTimer = 0f;
-        }
-        else if (hardBlockedTimer > sys.jamBackUpTime)
-        {
-            backUpTimer = 1f;
-            hardBlockedTimer = 0f;
-        }
-    }
 
     /// Follows the chain "I'm blocked by A, A by B, ..." - true if it comes back to this car
     /// and this car has the highest instance ID in the ring (so exactly one car yields).
@@ -761,50 +944,41 @@ public class TrafficCar : MonoBehaviour
         return false;
     }
 
-    private bool IsGhostPartner(Rigidbody body)
-    {
-        if (body == null) return false;
-        if (ghostThrough != null && body == ghostThrough.rb) return true;
-        var other = body.GetComponent<TrafficCar>();
-        return other != null && other.ghostThrough == this;
-    }
-
-    /// "Don't block the box": before the stop line of a junction, true while a stopped car is inside the junction
-    /// or the lane straight across is full. Gives up after TrafficSystem.maxJunctionHold so it can't deadlock.
-    private bool JunctionBlockedAhead(float dt)
+    /// Check the junction and the planned exit lane before committing to the crossing.
+    private bool JunctionBlockedAhead()
     {
         if (!sys.dontBlockJunctions || lightAhead == null || (state == State.Turning && turnDelay <= 0f) ||
-            stopLineDist < 0f || stopLineDist > 15f)
-        {
-            junctionHoldTimer = 0f;
-            return false;
-        }
-        if (junctionHoldTimer > sys.maxJunctionHold) return false;
+            stopLineDist < 0f || stopLineDist > 15f) return false;
 
         float half = lightAhead.stopLineDistance;
-        Vector3 c = lightAhead.Center;
-        Vector3 r = Right(heading);
-        bool blocked = false;
+        Vector3 center = lightAhead.Center;
+        Vector3 exit = plannedJunction == lightAhead ? plannedExit : heading;
+        Vector3 exitRight = Right(exit);
+        float exitSide = exit == heading ? Vector3.Dot(pos - center, exitRight) : plannedExitSide;
+        float exitLength = halfLength * 2f + minGap;
+        Vector3 exitCenter = center + exit * (half + exitLength * 0.5f) + exitRight * exitSide;
         foreach (var other in AllCars)
         {
-            if (other == this || other.rb == null || !other.isActiveAndEnabled || other.speed > 1f) continue;
-            Vector3 p = other.rb.position;
-            Vector3 rel = p - c;
-            if (Mathf.Abs(rel.x) < half - 0.5f && Mathf.Abs(rel.z) < half - 0.5f) { blocked = true; break; }
+            if (other == this || other.rb == null || !other.isActiveAndEnabled ||
+                other.gameObject.scene != gameObject.scene) continue;
 
-            // Our exit lane right after the junction, with no room left for us.
-            float along = Vector3.Dot(rel, heading);
-            float side = Vector3.Dot(p - pos, r);
-            if (along > half && along < half + halfLength * 2f + minGap && Mathf.Abs(side) < halfWidth + 1f &&
-                Vector3.Dot(other.Direction, heading) > 0.7f)
+            bool parked = other.state == State.Parked;
+            other.Footprint(parked ? other.rb.position : other.pos,
+                parked ? other.rb.rotation : other.CarRotation(), out Vector3 carCenter,
+                out Vector3 forward, out Vector3 right);
+            Vector3 relative = carCenter - center;
+            if (Overlaps(center, Vector3.forward, Vector3.right, half - 0.75f, half - 0.75f,
+                carCenter, forward, right, other.halfLength, other.halfWidth))
             {
-                blocked = true;
-                break;
+                // Ignore the nose of an approaching car while its center is still outside.
+                if (Mathf.Abs(relative.x) < half && Mathf.Abs(relative.z) < half ||
+                    Vector3.Dot(relative, forward) > 0f) return true;
             }
+
+            if (Overlaps(exitCenter, exit, exitRight, exitLength * 0.5f, halfWidth,
+                carCenter, forward, right, other.halfLength, other.halfWidth)) return true;
         }
-        if (blocked) junctionHoldTimer += dt;
-        else junctionHoldTimer = 0f;
-        return blocked;
+        return false;
     }
 
     // ---------------------------------------------------------------- helpers
