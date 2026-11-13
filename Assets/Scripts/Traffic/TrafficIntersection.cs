@@ -9,9 +9,9 @@ public enum LightState { Green, Yellow, Red }
 /// </summary>
 public class TrafficIntersection : MonoBehaviour
 {
-    public float greenTime = 12f;
+    public float greenTime = 20f;
     public float yellowTime = 3f;
-    public float allRedTime = 2f;
+    public float allRedTime = 1.5f;
     [Tooltip("Distance from the intersection centre to the stop line.")]
     public float stopLineDistance = 10f;
 

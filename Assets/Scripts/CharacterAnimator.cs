@@ -53,7 +53,7 @@ public class CharacterAnimator : MonoBehaviour
     private AnimationState idleState, walkState, runState;
     private float idleW = 1f, walkW, runW;
 
-    private Bone hips, spine, spine1, spine2, neck, head, leftArm, rightArm;
+    private Bone hips, spine, spine1, spine2, neck, head, leftArm, rightArm, leftForeArm, rightForeArm;
     private Bone leftUpLeg, leftLeg, leftFoot, rightUpLeg, rightLeg, rightFoot;
     private Bone[] allBones;
     private float legLength = 0.9f;
@@ -66,6 +66,7 @@ public class CharacterAnimator : MonoBehaviour
     private float landSquash;
     private float crouchAmount;
     private float headAngle;
+    private float deliveryCarry, deliveryReach, deliveryStow, deliveryBend, deliveryCrouch;
 
     // Remembers the animated pose so procedural offsets never accumulate on bones the clips don't key.
     private class Bone
@@ -99,6 +100,22 @@ public class CharacterAnimator : MonoBehaviour
             if (t != null && Mathf.Abs(angle) > 0.001f)
                 t.rotation = Quaternion.AngleAxis(angle, worldAxis) * t.rotation;
         }
+
+        public void BlendLocal(Quaternion target, float weight)
+        {
+            if (t != null && weight > 0f)
+                t.localRotation = Quaternion.Slerp(t.localRotation, target, Mathf.Clamp01(weight));
+        }
+    }
+
+    /// <summary>Blends the courier into the package pickup/carry/stow pose for this frame.</summary>
+    public void SetDeliveryPose(float carry, float reach, float stow, float bend, float crouch)
+    {
+        deliveryCarry = Mathf.Clamp01(carry);
+        deliveryReach = Mathf.Clamp01(reach);
+        deliveryStow = Mathf.Clamp01(stow);
+        deliveryBend = bend;
+        deliveryCrouch = crouch;
     }
 
     private void Awake()
@@ -178,6 +195,8 @@ public class CharacterAnimator : MonoBehaviour
         head = new Bone(Find(root, "Head"));
         leftArm = new Bone(Find(root, "LeftArm"));
         rightArm = new Bone(Find(root, "RightArm"));
+        leftForeArm = new Bone(Find(root, "LeftForeArm"));
+        rightForeArm = new Bone(Find(root, "RightForeArm"));
         leftUpLeg = new Bone(Find(root, "LeftUpLeg"));
         leftLeg = new Bone(Find(root, "LeftLeg"));
         leftFoot = new Bone(Find(root, "LeftFoot"));
@@ -185,7 +204,7 @@ public class CharacterAnimator : MonoBehaviour
         rightLeg = new Bone(Find(root, "RightLeg"));
         rightFoot = new Bone(Find(root, "RightFoot"));
 
-        allBones = new[] { hips, spine, spine1, spine2, neck, head, leftArm, rightArm,
+        allBones = new[] { hips, spine, spine1, spine2, neck, head, leftArm, rightArm, leftForeArm, rightForeArm,
                            leftUpLeg, leftLeg, leftFoot, rightUpLeg, rightLeg, rightFoot };
 
         if (leftUpLeg.t != null && leftLeg.t != null && leftFoot.t != null)
@@ -309,7 +328,7 @@ public class CharacterAnimator : MonoBehaviour
         bank = Mathf.Lerp(bank, Mathf.Clamp(targetBank, -maxLean, maxLean), 1f - Mathf.Exp(-leanSmoothing * dt));
 
         // --- How far the hips drop (crouch, jump wind-up, landing) and how much the legs tuck (air) ---
-        float hipDrop = crouchAmount * crouchDepth + windup * jumpCrouchDepth + landSquash;
+        float hipDrop = crouchAmount * crouchDepth + windup * jumpCrouchDepth + landSquash + deliveryCrouch;
         hipDrop = Mathf.Min(hipDrop, legLength * 0.6f);
 
         float fallSpeed = Mathf.Max(0f, -v.y);
@@ -317,7 +336,8 @@ public class CharacterAnimator : MonoBehaviour
 
         // Spine leans forward more when crouched/squashed, to keep balance.
         float squash01 = maxLandSquash > 0f ? landSquash / maxLandSquash : 0f;
-        float spineLean = lean + crouchAmount * crouchSpineLean + squash01 * 12f + windup * 10f + airAmount * 5f;
+        float spineLean = lean + crouchAmount * crouchSpineLean + squash01 * 12f + windup * 10f + airAmount * 5f
+                          + deliveryBend;
         spine.Rotate(spineLean * 0.4f, right);
         spine1.Rotate(spineLean * 0.3f, right);
         spine2.Rotate(spineLean * 0.3f, right);
@@ -335,6 +355,34 @@ public class CharacterAnimator : MonoBehaviour
         float armRaise = airAmount * airArmRaise * (1f + 0.3f * Mathf.Clamp01(fallSpeed / 6f)) + squash01 * 20f;
         leftArm.Rotate(-armRaise, fwd);
         rightArm.Rotate(armRaise, fwd);
+
+        // Package handling is blended here, before the pose is cached, so it remains stable on top of walk/idle clips.
+        float deliveryWeight = Mathf.Max(deliveryCarry, Mathf.Max(deliveryReach, deliveryStow));
+        if (deliveryWeight > 0f)
+        {
+            Quaternion leftUpper = Quaternion.Euler(-32f, 12f, 48f);
+            Quaternion rightUpper = Quaternion.Euler(-32f, -12f, -48f);
+            Quaternion leftLower = Quaternion.Euler(0f, 72f, 0f);
+            Quaternion rightLower = Quaternion.Euler(0f, -72f, 0f);
+            if (deliveryReach > 0f)
+            {
+                leftUpper = Quaternion.Slerp(leftUpper, Quaternion.Euler(12f, 16f, 66f), deliveryReach);
+                rightUpper = Quaternion.Slerp(rightUpper, Quaternion.Euler(12f, -16f, -66f), deliveryReach);
+                leftLower = Quaternion.Slerp(leftLower, Quaternion.Euler(0f, 88f, 0f), deliveryReach);
+                rightLower = Quaternion.Slerp(rightLower, Quaternion.Euler(0f, -88f, 0f), deliveryReach);
+            }
+            if (deliveryStow > 0f)
+            {
+                leftUpper = Quaternion.Slerp(leftUpper, Quaternion.Euler(-50f, 8f, 42f), deliveryStow);
+                rightUpper = Quaternion.Slerp(rightUpper, Quaternion.Euler(-50f, -8f, -42f), deliveryStow);
+                leftLower = Quaternion.Slerp(leftLower, Quaternion.Euler(0f, 48f, 0f), deliveryStow);
+                rightLower = Quaternion.Slerp(rightLower, Quaternion.Euler(0f, -48f, 0f), deliveryStow);
+            }
+            leftArm.BlendLocal(leftUpper, deliveryWeight);
+            rightArm.BlendLocal(rightUpper, deliveryWeight);
+            leftForeArm.BlendLocal(leftLower, deliveryWeight);
+            rightForeArm.BlendLocal(rightLower, deliveryWeight);
+        }
 
         // --- Head turns toward where the camera is looking ---
         float targetHead = 0f;

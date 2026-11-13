@@ -17,6 +17,9 @@ public class TrafficSystem : MonoBehaviour
     [Header("Which objects are vehicles")]
     [SerializeField] private bool autoAddToVehicles = true;
     [SerializeField] private string vehicleNamePrefix = "Vehicle";
+    [Header("Traffic amount")]
+    [SerializeField, Min(0f)] private float minimumCarSpacing = 12f;
+    [SerializeField, Min(1)] private int maximumMovingCars = 32;
     [Tooltip("Turn off if the cars drive backwards (model's front faces -Z).")]
     public bool modelFacesPositiveZ = true;
 
@@ -28,13 +31,11 @@ public class TrafficSystem : MonoBehaviour
     public float laneOffsetFromCurb = 3.2f; // distance from the right curb to the car's centre
     public float turnRadius = 7f;           // left turns / U-turns
     public float minTurnRadius = 4f;        // right turns hug the corner
-    [Range(0f, 1f)] public float chanceStraight = 0.5f;
 
     [Header("Sensing")]
     public float maxCurbScan = 12f;         // how far sideways a car looks for the curb
     public float lookAhead = 9f;            // how far ahead it looks for the end of the road
     public float safeGap = 2.5f;            // gap kept to the car / person in front
-    public float patience = 4f;             // seconds stuck before squeezing past
     public float senseInterval = 0.2f;
 
     [Header("Driver behaviour (Intelligent Driver Model)")]
@@ -46,18 +47,14 @@ public class TrafficSystem : MonoBehaviour
     [Header("Anti-gridlock")]
     [Tooltip("Wait at the stop line while a stopped car is inside the junction or our exit lane is full.")]
     public bool dontBlockJunctions = true;
-    [Tooltip("Fail-safe: never hold at a free light longer than this (s).")]
-    public float maxJunctionHold = 6f;
     [Tooltip("Blocked nose-to-bumper by a car that isn't moving for this long (s): back up a little.")]
     public float jamBackUpTime = 3f;
-    [Tooltip("Still jammed behind the same stopped car after this long (s): drive past it.")]
-    public float jamPassAfter = 10f;
 
     [Header("Traffic lights")]
     public bool trafficLights = true;
-    public float greenTime = 12f;
+    public float greenTime = 20f;
     public float yellowTime = 3f;
-    public float allRedTime = 2f;
+    public float allRedTime = 1.5f;
     [SerializeField] private string[] intersectionPrefixes = { "Road Intersection", "Road T_Intersection" };
     [SerializeField] private string signalPrefix = "Props_Traffic Signal";
 
@@ -69,13 +66,26 @@ public class TrafficSystem : MonoBehaviour
     public static TrafficSystem Instance { get; private set; }
 
     private readonly Dictionary<Collider, bool> roadColliderCache = new Dictionary<Collider, bool>();
+    private readonly Dictionary<TrafficIntersection, List<TrafficIntersection>> roadLinks =
+        new Dictionary<TrafficIntersection, List<TrafficIntersection>>();
     private readonly RaycastHit[] hits = new RaycastHit[16];
+    private readonly List<Pose> trafficStarts = new List<Pose>();
 
-    [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.AfterSceneLoad)]
-    private static void Bootstrap()
+    [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.BeforeSceneLoad)]
+    private static void RegisterSceneBootstrap()
     {
-        if (FindFirstObjectByType<TrafficSystem>() == null)
-            new GameObject("Traffic System").AddComponent<TrafficSystem>();
+        SceneManager.sceneLoaded -= BootstrapScene;
+        SceneManager.sceneLoaded += BootstrapScene;
+    }
+
+    private static void BootstrapScene(Scene scene, LoadSceneMode mode)
+    {
+        // The automatic system belongs to the scene and is destroyed when Retry reloads it.
+        if (mode != LoadSceneMode.Single || FindFirstObjectByType<TrafficSystem>() != null) return;
+
+        var traffic = new GameObject("Traffic System");
+        SceneManager.MoveGameObjectToScene(traffic, scene);
+        traffic.AddComponent<TrafficSystem>();
     }
 
     private void Awake()
@@ -96,20 +106,70 @@ public class TrafficSystem : MonoBehaviour
         // City pieces at the top level or inside Hierarchy folders.
         var roots = HierarchyGroup.AllPieces();
 
-        if (trafficLights) SetupTrafficLights(roots);
+        SetupTrafficLights(roots);
+        Physics.SyncTransforms();
+        BuildRoadLinks();
 
         if (!autoAddToVehicles) return;
-        int count = 0;
+        var candidates = new List<GameObject>();
         foreach (GameObject root in roots)
         {
             if (!root.activeInHierarchy || !root.name.StartsWith(vehicleNamePrefix)) continue;
             if (root.GetComponent<PlayerVehicle>() != null) continue;   // the player drives this one
             if (root.GetComponentInChildren<MeshRenderer>() == null) continue;
-            if (root.GetComponent<TrafficCar>() == null) root.AddComponent<TrafficCar>();
-            count++;
+            var settings = root.GetComponent<TrafficVehicleSettings>();
+            if (settings != null && settings.Behaviour == TrafficBehaviour.Stationary)
+            {
+                var parked = root.GetComponent<TrafficCar>();
+                if (parked == null) parked = root.AddComponent<TrafficCar>();
+                parked.Initialize(0f);
+                continue;
+            }
+
+            if (!IsHeavyVehicle(root.name)) candidates.Add(root);
+            root.SetActive(false);
         }
-        if (count > 0)
-            Debug.Log($"TrafficSystem: {count} vehicles are now driving, {Intersections.Count} intersections have traffic lights.");
+
+        foreach (GameObject root in candidates)
+        {
+            if (trafficStarts.Count >= maximumMovingCars) break;
+            root.SetActive(true);
+            var car = root.GetComponent<TrafficCar>();
+            if (car == null) car = root.AddComponent<TrafficCar>();
+            Physics.SyncTransforms();
+            if (!car.Initialize(minimumCarSpacing)) continue;
+            trafficStarts.Add(new Pose(root.transform.position, root.transform.rotation));
+        }
+        Debug.Log($"TrafficSystem: placed {trafficStarts.Count} moving vehicles across {Intersections.Count} intersections.");
+    }
+
+    internal bool TryRejoinTraffic(TrafficCar car)
+    {
+        if (trafficStarts.Count == 0) return false;
+        Camera camera = Camera.main;
+        int first = Random.Range(0, trafficStarts.Count);
+        for (int i = 0; i < trafficStarts.Count; i++)
+        {
+            Pose start = trafficStarts[(first + i) % trafficStarts.Count];
+            if ((start.position - car.transform.position).sqrMagnitude < 25f * 25f) continue;
+            if (camera != null)
+            {
+                if ((start.position - camera.transform.position).sqrMagnitude < 25f * 25f) continue;
+                Vector3 view = camera.WorldToViewportPoint(start.position);
+                if (view.z > 0f && view.x > -0.1f && view.x < 1.1f && view.y > -0.1f && view.y < 1.1f)
+                    continue;
+            }
+            if (car.TryRejoinAt(start, minimumCarSpacing)) return true;
+        }
+        return false;
+    }
+
+    private bool IsHeavyVehicle(string vehicleName)
+    {
+        // These city models need a wider turning envelope than the local lanes provide.
+        return vehicleName.StartsWith(vehicleNamePrefix + "_Bus", System.StringComparison.OrdinalIgnoreCase) ||
+               vehicleName.StartsWith(vehicleNamePrefix + "_Truck", System.StringComparison.OrdinalIgnoreCase) ||
+               vehicleName.StartsWith(vehicleNamePrefix + "_Container", System.StringComparison.OrdinalIgnoreCase);
     }
 
     private void SetupTrafficLights(List<GameObject> roots)
@@ -129,6 +189,8 @@ public class TrafficSystem : MonoBehaviour
                 break;
             }
         }
+
+        if (!trafficLights) return;
 
         // Hook each signal prop to the nearest intersection. The way it faces tells which traffic it controls.
         foreach (GameObject root in roots)
@@ -157,7 +219,8 @@ public class TrafficSystem : MonoBehaviour
     /// The next intersection in front of a car driving along 'heading' from 'pos' (within 'range' metres),
     /// and the distance from 'pos' to its stop line. Returns null if there is none.
     /// </summary>
-    public TrafficIntersection IntersectionAhead(Vector3 pos, Vector3 heading, float range, out float distToStopLine)
+    public TrafficIntersection IntersectionAhead(Vector3 pos, Vector3 heading, float range,
+        out float distToStopLine, TrafficIntersection excluded = null)
     {
         distToStopLine = 0f;
         TrafficIntersection result = null;
@@ -165,6 +228,7 @@ public class TrafficSystem : MonoBehaviour
         Vector3 right = Vector3.Cross(Vector3.up, heading);
         foreach (var ti in Intersections)
         {
+            if (ti == excluded) continue;
             Vector3 rel = ti.Center - pos;
             float along = Vector3.Dot(rel, heading);
             float lateral = Mathf.Abs(Vector3.Dot(rel, right));
@@ -172,6 +236,78 @@ public class TrafficSystem : MonoBehaviour
             if (along < best) { best = along; result = ti; distToStopLine = along - ti.stopLineDistance; }
         }
         return result;
+    }
+
+    private void BuildRoadLinks()
+    {
+        foreach (var from in Intersections)
+        {
+            var neighbors = new List<TrafficIntersection>();
+            roadLinks.Add(from, neighbors);
+            for (int i = 0; i < 4; i++)
+            {
+                Vector3 direction = Quaternion.Euler(0f, 90f * i, 0f) * Vector3.forward;
+                Vector3 right = Vector3.Cross(Vector3.up, direction);
+                TrafficIntersection nearest = null;
+                float distance = float.PositiveInfinity;
+                foreach (var to in Intersections)
+                {
+                    Vector3 delta = to.Center - from.Center;
+                    float along = Vector3.Dot(delta, direction);
+                    if (along <= 1f || along >= distance || Mathf.Abs(Vector3.Dot(delta, right)) > 1f) continue;
+                    nearest = to;
+                    distance = along;
+                }
+
+                if (nearest == null) continue;
+                Vector3 start = new Vector3(from.Center.x, 0f, from.Center.z);
+                bool connected = true;
+                for (float d = 2f; d < distance; d += 2f)
+                {
+                    if (IsRoad(start + direction * d + right * 2f)) continue;
+                    connected = false;
+                    break;
+                }
+                if (connected) neighbors.Add(nearest);
+            }
+        }
+    }
+
+    public TrafficIntersection PlanRoute(TrafficIntersection start, Vector3 heading,
+        TrafficIntersection previousDestination, List<TrafficIntersection> route)
+    {
+        route.Clear();
+        if (!roadLinks.ContainsKey(start)) return null;
+
+        var parents = new Dictionary<TrafficIntersection, TrafficIntersection> { [start] = null };
+        var frontier = new Queue<TrafficIntersection>();
+        frontier.Enqueue(start);
+        var destinations = new List<TrafficIntersection>();
+        var throughDestinations = new List<TrafficIntersection>();
+        while (frontier.Count > 0)
+        {
+            var current = frontier.Dequeue();
+            foreach (var next in roadLinks[current])
+            {
+                if (parents.ContainsKey(next)) continue;
+                if (current == start && Vector3.Dot((next.Center - start.Center).normalized, heading) < -0.5f)
+                    continue;
+                parents.Add(next, current);
+                frontier.Enqueue(next);
+                if (next == previousDestination) continue;
+                destinations.Add(next);
+                // Prefer destinations beyond the first turn with a road onward after arrival.
+                if (current != start && roadLinks[next].Exists(exit => exit != current))
+                    throughDestinations.Add(next);
+            }
+        }
+
+        if (destinations.Count == 0) return null;
+        if (throughDestinations.Count > 0) destinations = throughDestinations;
+        var destination = destinations[Random.Range(0, destinations.Count)];
+        for (var node = destination; node != null; node = parents[node]) route.Add(node);
+        route.Reverse();
+        return destination;
     }
 
     // ---------------------------------------------------------------- shared visuals / audio
