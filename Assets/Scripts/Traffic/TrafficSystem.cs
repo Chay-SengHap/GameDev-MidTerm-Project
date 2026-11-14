@@ -147,6 +147,14 @@ public class TrafficSystem : MonoBehaviour
     {
         if (trafficStarts.Count == 0) return false;
         Camera camera = Camera.main;
+        if (camera != null)
+        {
+            Vector3 currentView = camera.WorldToViewportPoint(car.transform.position);
+            if ((camera.transform.position - car.transform.position).sqrMagnitude < 20f * 20f ||
+                (currentView.z > 0f && currentView.x > -0.1f && currentView.x < 1.1f &&
+                 currentView.y > -0.1f && currentView.y < 1.1f))
+                return false;
+        }
         int first = Random.Range(0, trafficStarts.Count);
         for (int i = 0; i < trafficStarts.Count; i++)
         {
@@ -274,7 +282,7 @@ public class TrafficSystem : MonoBehaviour
     }
 
     public TrafficIntersection PlanRoute(TrafficIntersection start, Vector3 heading,
-        TrafficIntersection previousDestination, List<TrafficIntersection> route)
+        TrafficIntersection previousDestination, List<TrafficIntersection> route, TrafficIntersection blockedExit = null)
     {
         route.Clear();
         if (!roadLinks.ContainsKey(start)) return null;
@@ -290,6 +298,7 @@ public class TrafficSystem : MonoBehaviour
             foreach (var next in roadLinks[current])
             {
                 if (parents.ContainsKey(next)) continue;
+                if (current == start && next == blockedExit) continue;
                 if (current == start && Vector3.Dot((next.Center - start.Center).normalized, heading) < -0.5f)
                     continue;
                 parents.Add(next, current);

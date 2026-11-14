@@ -22479,8 +22479,8 @@ MonoBehaviour:
   m_EditorClassIdentifier: 
   autoAddToVehicles: 1
   vehicleNamePrefix: Vehicle
-  minimumCarSpacing: 12
-  maximumMovingCars: 32
+  minimumCarSpacing: 16
+  maximumMovingCars: 24
   modelFacesPositiveZ: 1
   cruiseSpeed: 9
   turnSpeed: 4.5

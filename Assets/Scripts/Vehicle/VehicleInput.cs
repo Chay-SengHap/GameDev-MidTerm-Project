@@ -14,6 +14,7 @@ using UnityEngine.InputSystem;
 ///   E              - get on / off the scooter        (gamepad: west button)
 ///   H              - horn                            (gamepad: left stick press)
 ///   L              - headlight on / off              (gamepad: d-pad up)
+///   Q (hold)       - scooter wheelie
 /// </summary>
 [DisallowMultipleComponent]
 public class VehicleInput : MonoBehaviour
@@ -31,6 +32,7 @@ public class VehicleInput : MonoBehaviour
     /// True only on the frame the get on / get off key was pressed.
     public bool InteractPressed { get; private set; }
     public bool HornHeld { get; private set; }
+    public bool WheelieHeld { get; private set; }
     /// True only on the frame the headlight key was pressed.
     public bool LightTogglePressed { get; private set; }
 
@@ -40,6 +42,7 @@ public class VehicleInput : MonoBehaviour
         bool handbrake = false, reset = false, interact = false, horn = false, lights = false;
 
         var kb = Keyboard.current;
+        WheelieHeld = kb != null && kb.qKey.isPressed;
         if (kb != null)
         {
             if (kb.wKey.isPressed || kb.upArrowKey.isPressed || kb.leftShiftKey.isPressed || kb.rightShiftKey.isPressed)
