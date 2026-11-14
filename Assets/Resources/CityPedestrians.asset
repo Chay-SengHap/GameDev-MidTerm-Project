@@ -1,0 +1,48 @@
+%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!114 &11400000
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 197d8d0881428b848ac180317221393c, type: 3}
+  m_Name: CityPedestrians
+  m_EditorClassIdentifier: Assembly-CSharp::CityPedestrians
+  characters:
+  - {fileID: 6992360245988857, guid: e7960ca7e82a51144ac57591496310c6, type: 3}
+  - {fileID: 6666370650198795433, guid: 7c7c0c64e1d43174a9ab92c41a3e897c, type: 3}
+  - {fileID: 7873621286350765, guid: 67940ab91e14440409bfe800dcb3ed43, type: 3}
+  - {fileID: 1597729359011672831, guid: 9c67f3b7c9725ca4b9dd36a437e04f31, type: 3}
+  - {fileID: 6157916868785764055, guid: 927c723bc1d858245994b6f3977c5f6a, type: 3}
+  - {fileID: 6415561937286359620, guid: d1255cdc2aa17e64dac91efa5124e941, type: 3}
+  - {fileID: 7025317360818597346, guid: c789233b8f1e0db45819b1105599e47b, type: 3}
+  - {fileID: 3560489353750393262, guid: 8cf71091043ddd54d9341585de596b13, type: 3}
+  - {fileID: 3613509038339085887, guid: e5e7ee9e267ceab4c82af64dcce4e420, type: 3}
+  - {fileID: 4324779109626998850, guid: d985f15668df6d745a55e7bafb01357b, type: 3}
+  - {fileID: 6811592647384369502, guid: 6d535459e860e5e4a848937305732499, type: 3}
+  - {fileID: 6463178797277354336, guid: fc2efff696743074ebe14a5214e205d8, type: 3}
+  - {fileID: 2168590115626787667, guid: 833822f34cc798143afe014bc4743ff2, type: 3}
+  - {fileID: 6971121201570370863, guid: db91a7b2101a20d4cb6d32da43560d1a, type: 3}
+  - {fileID: 6128125313740500714, guid: 8e2407cfbae80e044bae21b813043ac3, type: 3}
+  - {fileID: 3927503875114477191, guid: e760aac9727569a4faff8e529b1f4ebe, type: 3}
+  - {fileID: 1585272512566830274, guid: 8415c15ca6ae0194fb7b22a9f13c5224, type: 3}
+  - {fileID: 9092202679672275406, guid: 03514bc77d960634eb7bebea16b66b4b, type: 3}
+  - {fileID: 8916784938708422293, guid: 3d6a1920cc4fcbc44bf765a76a7d1327, type: 3}
+  - {fileID: 1332946792230564792, guid: cab265c9f8731714290ec0a1569e469d, type: 3}
+  walk:
+  - {fileID: 7400000, guid: 061f3005180b3794fb9f879b783116a3, type: 2}
+  - {fileID: 7400000, guid: e15fa9a90469174409b4734045323534, type: 2}
+  - {fileID: 7400000, guid: abff67fa6ea59d341b763399bc92b36a, type: 2}
+  - {fileID: 7400000, guid: 4814502c374f42e489dfb36b68c1996e, type: 2}
+  idle:
+  - {fileID: 7400000, guid: e00b11e6381ee5e40a24de986b56c70f, type: 2}
+  - {fileID: 7400000, guid: c361c2336b8c17d41ba567c1f26267b5, type: 2}
+  - {fileID: 7400000, guid: a6dabff2c698b1f44a7d1a5dcde34da7, type: 2}
+  greeting: {fileID: 7400000, guid: 74aa4c68caae9974795d0fca0fba6134, type: 2}
+  coffeeChairPrefab: {fileID: 100000, guid: 97229e82747352a43b48688ec573f8e4, type: 3}
+  population: 78
+  setupVersion: 7

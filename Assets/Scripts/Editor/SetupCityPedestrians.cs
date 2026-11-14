@@ -1,33 +1,116 @@
 using System;
+using System.Collections.Generic;
 using System.Linq;
 using UnityEditor;
+using UnityEditor.SceneManagement;
 using UnityEngine;
+using UnityEngine.SceneManagement;
 
 public static class SetupCityPedestrians
 {
     private const string CollectionPath = "Assets/Resources/CityPedestrians.asset";
+    private const string CoffeeChairPrefabPath = "Assets/SimplePoly City - Low Poly Assets/Prefab/Props/Props_Coffee shop chair.prefab";
+    private const int DefaultPopulation = 78;
+
+    [InitializeOnLoadMethod]
+    private static void AutoSetUpOnLoad()
+    {
+        EditorApplication.playModeStateChanged -= OnPlayModeChanged;
+        EditorApplication.playModeStateChanged += OnPlayModeChanged;
+        EditorApplication.delayCall += CheckAndSetUp;
+    }
+
+    private static void OnPlayModeChanged(PlayModeStateChange state)
+    {
+        if (state == PlayModeStateChange.EnteredEditMode)
+            EditorApplication.delayCall += CheckAndSetUp;
+    }
+
+    private static void CheckAndSetUp()
+    {
+        if (Application.isPlaying || EditorApplication.isCompiling || EditorApplication.isUpdating)
+            return;
+
+        var existing = AssetDatabase.LoadAssetAtPath<CityPedestrians>(CollectionPath);
+        Scene activeScene = SceneManager.GetActiveScene();
+        GameObject sceneRoot = activeScene.IsValid() && activeScene.name == "CityScence"
+            ? activeScene.GetRootGameObjects().FirstOrDefault(go => go != null && go.name == CityPedestrians.RootObjectName)
+            : null;
+        int currentCount = sceneRoot != null ? sceneRoot.GetComponentsInChildren<CityPedestrian>(true).Length : 0;
+        bool hasCurrentSceneVersion = sceneRoot != null && sceneRoot.transform.Find(CityPedestrians.VersionMarkerName) != null;
+
+        if (existing == null || existing.characters == null || existing.characters.Length < 20 ||
+            existing.population < DefaultPopulation || existing.setupVersion != CityPedestrians.CurrentSetupVersion ||
+            currentCount < DefaultPopulation || !hasCurrentSceneVersion)
+        {
+            SetUpInternal(selectAsset: false);
+        }
+    }
 
     [MenuItem("Tools/City Driving/Set Up Casual Pedestrians")]
     public static void SetUp()
     {
+        SetUpInternal(selectAsset: true);
+    }
+
+    private static void SetUpInternal(bool selectAsset)
+    {
         var paths = AssetDatabase.FindAssets("", new[] { "Assets" })
             .Select(AssetDatabase.GUIDToAssetPath)
-            .Where(path => Normalize(path).Contains("casualcharactercollection3"))
+            .Where(path =>
+            {
+                string norm = Normalize(path);
+                return norm.Contains("casualcharactercollection3") ||
+                       norm.Contains("hodaartlowpolycharactercollection3");
+            })
             .ToArray();
-        var characters = paths
-            .Where(path => path.EndsWith(".prefab", StringComparison.OrdinalIgnoreCase))
+
+        var casualChars = paths
+            .Where(path => Normalize(path).Contains("casualcharactercollection3") &&
+                           path.EndsWith(".prefab", StringComparison.OrdinalIgnoreCase))
             .Select(AssetDatabase.LoadAssetAtPath<GameObject>)
             .Where(IsCharacter)
             .OrderBy(prefab => prefab.name)
             .ToArray();
+
+        var lowPolyFbxPaths = paths
+            .Where(path => Normalize(path).Contains("hodaartlowpolycharactercollection3") &&
+                           path.EndsWith("T-Pose.fbx", StringComparison.OrdinalIgnoreCase))
+            .ToArray();
+        foreach (var fbxPath in lowPolyFbxPaths)
+        {
+            if (AssetImporter.GetAtPath(fbxPath) is ModelImporter importer && !importer.isReadable)
+            {
+                importer.isReadable = true;
+                importer.SaveAndReimport();
+            }
+        }
+
+        var lowPolyChars = paths
+            .Where(path => Normalize(path).Contains("hodaartlowpolycharactercollection3") &&
+                           path.EndsWith(".prefab", StringComparison.OrdinalIgnoreCase))
+            .Select(AssetDatabase.LoadAssetAtPath<GameObject>)
+            .Where(IsCharacter)
+            .OrderBy(prefab => prefab.name)
+            .ToArray();
+
+        var interleaved = new List<GameObject>();
+        int maxCount = Mathf.Max(casualChars.Length, lowPolyChars.Length);
+        for (int i = 0; i < maxCount; i++)
+        {
+            if (i < casualChars.Length) interleaved.Add(casualChars[i]);
+            if (i < lowPolyChars.Length) interleaved.Add(lowPolyChars[i]);
+        }
+
+        var characters = interleaved.ToArray();
         if (characters.Length == 0)
         {
-            Debug.LogWarning("Import Hodaart's Casual Character Collection 3, including its character prefabs, then run this command again.");
+            Debug.LogWarning("Import Hodaart's Character Collection 3 prefabs, then run this command again.");
             return;
         }
 
         var clips = paths.Where(path => path.EndsWith(".anim", StringComparison.OrdinalIgnoreCase) ||
-                                       path.EndsWith(".fbx", StringComparison.OrdinalIgnoreCase))
+                                        path.EndsWith(".fbx", StringComparison.OrdinalIgnoreCase))
             .SelectMany(AssetDatabase.LoadAllAssetsAtPath)
             .OfType<AnimationClip>()
             .Concat(characters.SelectMany(character =>
@@ -35,15 +118,13 @@ public static class SetupCityPedestrians
                 Array.Empty<AnimationClip>()))
             .Distinct()
             .ToArray();
+
         var walk = clips.Where(clip => Normalize(clip.name).Contains("walk")).ToArray();
         var idle = clips.Where(clip => Normalize(clip.name).Contains("idle") &&
             !Normalize(clip.name).Contains("facial")).ToArray();
-        var bodyIdle = idle.Where(clip => Normalize(clip.name).EndsWith("idle1") ||
-                                          Normalize(clip.name).EndsWith("idle2")).ToArray();
-        if (bodyIdle.Length > 0) idle = bodyIdle;
-        var greeting = clips.FirstOrDefault(clip => Normalize(clip.name) == "hi") ??
-            clips.FirstOrDefault(clip => Normalize(clip.name).EndsWith("hi") ||
-                                         Normalize(clip.name).Contains("greet"));
+        var greeting = clips.FirstOrDefault(clip => Normalize(clip.name).Contains("greet")) ??
+            clips.FirstOrDefault(clip => Normalize(clip.name).EndsWith("hi"));
+
         if (walk.Length == 0 || idle.Length == 0)
         {
             Debug.LogWarning("The pedestrian setup needs the collection's Walk and Idle clips. Import those clips and run the command again.");
@@ -56,17 +137,41 @@ public static class SetupCityPedestrians
             if (!AssetDatabase.IsValidFolder("Assets/Resources"))
                 AssetDatabase.CreateFolder("Assets", "Resources");
             collection = ScriptableObject.CreateInstance<CityPedestrians>();
+            collection.population = DefaultPopulation;
             AssetDatabase.CreateAsset(collection, CollectionPath);
         }
-        Undo.RecordObject(collection, "Set up casual pedestrians");
+
+        Undo.RecordObject(collection, "Set up city pedestrians");
         collection.characters = characters;
         collection.walk = walk;
         collection.idle = idle;
         collection.greeting = greeting;
+        collection.coffeeChairPrefab = AssetDatabase.LoadAssetAtPath<GameObject>(CoffeeChairPrefabPath);
+        if (collection.population < DefaultPopulation)
+            collection.population = DefaultPopulation;
+        collection.setupVersion = CityPedestrians.CurrentSetupVersion;
+
         EditorUtility.SetDirty(collection);
         AssetDatabase.SaveAssets();
-        Selection.activeObject = collection;
-        Debug.Log($"City pedestrians configured with {characters.Length} character prefabs. Open CityScence and press Play.");
+
+        int spawnedCount = 0;
+        Scene activeScene = SceneManager.GetActiveScene();
+        if (activeScene.IsValid() && activeScene.isLoaded && activeScene.name == "CityScence" && !Application.isPlaying)
+        {
+            spawnedCount = collection.PopulateScene(activeScene, replaceExisting: true);
+            if (spawnedCount > 0)
+                EditorSceneManager.MarkSceneDirty(activeScene);
+        }
+
+        if (selectAsset)
+        {
+            GameObject root = activeScene.IsValid()
+                ? activeScene.GetRootGameObjects().FirstOrDefault(go => go != null && go.name == CityPedestrians.RootObjectName)
+                : null;
+            Selection.activeObject = root != null ? (UnityEngine.Object)root : collection;
+        }
+
+        Debug.Log($"City pedestrians configured with {characters.Length} character prefabs and {spawnedCount} citizens placed (Sitting on benches/restaurant chairs, Walking multi-corner routes, Talking with overhead speech bubbles, and Chilling).");
     }
 
     private static bool IsCharacter(GameObject prefab) =>

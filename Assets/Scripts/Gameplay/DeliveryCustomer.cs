@@ -1,82 +1,70 @@
+using System.Linq;
 using UnityEngine;
 
 public class DeliveryCustomer : MonoBehaviour
 {
     internal Transform ParcelHold { get; private set; }
-    private Transform leftArm, rightArm;
-    private Material[] materials;
+
+    private CityPedestrian pedestrian;
+    private Animator body;
+    private bool hasParcel;
 
     internal static DeliveryCustomer Create(Transform parking)
     {
-        var actor = new GameObject("Restaurant Customer");
-        actor.transform.SetParent(parking, false);
+        var collection = Resources.Load<CityPedestrians>("CityPedestrians");
+        var prefab = collection != null ? collection.characters.FirstOrDefault(character => character != null) : null;
+        if (prefab == null)
+        {
+            Debug.LogError("The restaurant customer needs a character prefab in the CityPedestrians collection.");
+            return null;
+        }
+
+        var actor = Instantiate(prefab, parking, false);
+        actor.name = "Restaurant Customer";
         actor.transform.localPosition = new Vector3(1.2f, 0.2f, -4.5f);
+        actor.transform.localRotation = Quaternion.identity;
+        foreach (var collider in actor.GetComponentsInChildren<Collider>(true))
+            collider.enabled = false;
+
         var customer = actor.AddComponent<DeliveryCustomer>();
-        customer.Build();
-        customer.Face(parking.position);
+        customer.body = actor.GetComponentsInChildren<Animator>().FirstOrDefault(animator => animator.isHuman);
+        customer.pedestrian = actor.GetComponent<CityPedestrian>();
+        if (customer.pedestrian == null) customer.pedestrian = actor.AddComponent<CityPedestrian>();
+        customer.pedestrian.Initialize(new[] { actor.transform.position }, parking.position,
+            collection.idle.FirstOrDefault(clip => clip != null), null, null, 0);
+        customer.ParcelHold = new GameObject("Parcel Hold").transform;
+        customer.ParcelHold.SetParent(actor.transform, false);
+        customer.ParcelHold.localPosition = new Vector3(0f, 1.12f, 0.37f);
         return customer;
     }
 
     internal void Face(Vector3 point)
     {
-        Vector3 direction = point - transform.position;
-        direction.y = 0f;
-        if (direction.sqrMagnitude > 0.01f) transform.rotation = Quaternion.LookRotation(direction);
+        Vector3 direction = Vector3.ProjectOnPlane(point - transform.position, Vector3.up);
+        if (direction.sqrMagnitude <= 0.01f) return;
+        pedestrian.SetLookPoint(point);
+        transform.rotation = Quaternion.LookRotation(direction);
     }
 
-    internal void ReceiveParcel()
+    internal void ReceiveParcel() => hasParcel = true;
+
+    private void LateUpdate()
     {
-        leftArm.localRotation = Quaternion.Euler(-70f, 0f, 15f);
-        rightArm.localRotation = Quaternion.Euler(-70f, 0f, -15f);
+        if (!hasParcel || body == null) return;
+        PoseArm(HumanBodyBones.LeftUpperArm, HumanBodyBones.LeftLowerArm, HumanBodyBones.LeftHand, -1f);
+        PoseArm(HumanBodyBones.RightUpperArm, HumanBodyBones.RightLowerArm, HumanBodyBones.RightHand, 1f);
     }
 
-    private void Build()
+    private void PoseArm(HumanBodyBones upperBone, HumanBodyBones lowerBone, HumanBodyBones handBone, float side)
     {
-        Shader shader = Shader.Find("Universal Render Pipeline/Lit");
-        materials = new[]
-        {
-            new Material(shader) { color = new Color(0.15f, 0.46f, 0.32f) },
-            new Material(shader) { color = new Color(0.16f, 0.19f, 0.28f) },
-            new Material(shader) { color = new Color(0.69f, 0.44f, 0.31f) },
-            new Material(shader) { color = new Color(0.12f, 0.08f, 0.06f) }
-        };
-        Part(transform, "Jacket", new Vector3(0f, 1.12f, 0f), new Vector3(0.48f, 0.55f, 0.28f), 0);
-        Part(transform, "Head", new Vector3(0f, 1.58f, 0f), new Vector3(0.31f, 0.36f, 0.29f), 2);
-        Part(transform, "Hair", new Vector3(0f, 1.76f, -0.015f), new Vector3(0.33f, 0.11f, 0.3f), 3);
-        foreach (float side in new[] { -1f, 1f })
-        {
-            Part(transform, "Trouser leg", new Vector3(side * 0.12f, 0.48f, 0f), new Vector3(0.19f, 0.7f, 0.22f), 1);
-            Part(transform, "Shoe", new Vector3(side * 0.12f, 0.09f, 0.06f), new Vector3(0.2f, 0.18f, 0.32f), 3);
-            Part(transform, "Eye", new Vector3(side * 0.069f, 1.62f, 0.149f), new Vector3(0.035f, 0.035f, 0.02f), 3);
-            Transform arm = new GameObject("Shoulder").transform;
-            arm.SetParent(transform, false);
-            arm.localPosition = new Vector3(side * 0.31f, 1.35f, 0f);
-            Part(arm, "Sleeve", new Vector3(0f, -0.19f, 0f), new Vector3(0.15f, 0.4f, 0.17f), 0);
-            Part(arm, "Hand", new Vector3(0f, -0.44f, 0f), new Vector3(0.14f, 0.14f, 0.15f), 2);
-            if (side < 0f) leftArm = arm;
-            else rightArm = arm;
-        }
-        ParcelHold = new GameObject("Parcel Hold").transform;
-        ParcelHold.SetParent(transform, false);
-        ParcelHold.localPosition = new Vector3(0f, 1.28f, 0.48f);
-    }
+        Transform upper = body.GetBoneTransform(upperBone);
+        Transform lower = body.GetBoneTransform(lowerBone);
+        Transform hand = body.GetBoneTransform(handBone);
+        if (upper == null || lower == null || hand == null) return;
 
-    private void Part(Transform parent, string partName, Vector3 position, Vector3 scale, int material)
-    {
-        var part = GameObject.CreatePrimitive(PrimitiveType.Cube);
-        part.name = partName;
-        part.transform.SetParent(parent, false);
-        part.transform.localPosition = position;
-        part.transform.localScale = scale;
-        var collider = part.GetComponent<Collider>();
-        collider.enabled = false;
-        Destroy(collider);
-        part.GetComponent<Renderer>().sharedMaterial = materials[material];
-    }
-
-    private void OnDestroy()
-    {
-        if (materials == null) return;
-        foreach (var material in materials) Destroy(material);
+        Vector3 elbow = transform.TransformPoint(new Vector3(side * 0.26f, 1.01f, 0.13f));
+        Vector3 grip = ParcelHold.TransformPoint(new Vector3(side * 0.19f, -0.05f, 0.04f));
+        upper.rotation = Quaternion.FromToRotation(lower.position - upper.position, elbow - upper.position) * upper.rotation;
+        lower.rotation = Quaternion.FromToRotation(hand.position - lower.position, grip - lower.position) * lower.rotation;
     }
 }

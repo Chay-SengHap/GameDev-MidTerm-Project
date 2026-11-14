@@ -39,6 +39,7 @@ public class GameMenu : MonoBehaviour
     private static bool skipTitleOnNextLoad;
 
     private MenuScreen screen = MenuScreen.None;
+    internal bool IsOpen => screen != MenuScreen.None;
     private MenuScreen controlsReturnTo;
     private GameObject titlePanel, pausePanel, controlsPanel;
     private GameObject titleFirst, pauseFirst, controlsFirst;

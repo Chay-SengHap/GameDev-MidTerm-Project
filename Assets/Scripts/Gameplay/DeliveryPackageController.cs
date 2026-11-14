@@ -9,7 +9,9 @@ using UnityEngine;
 [DisallowMultipleComponent]
 public class DeliveryPackageController : MonoBehaviour
 {
-    private enum PackageState { World, PickingUp, Carried, Stowing, Stowed, Delivered }
+    private enum PackageState { World, Approaching, PickingUp, Carried, Stowing, Stowed, Delivered }
+
+    private const float PickupContact = 0.40f;
 
     [SerializeField] private float pickupRange = 2.2f;
     [SerializeField] private float stowRange = 2.4f;
@@ -23,12 +25,18 @@ public class DeliveryPackageController : MonoBehaviour
     private Vector3 lidClosedPosition;
     private Quaternion lidClosedRotation;
     private Transform package;
+    private Transform leftGrip;
+    private Transform rightGrip;
     private PackageState state;
     private float animationTime;
     private Vector3 animationStartPosition;
     private Quaternion animationStartRotation;
     private Vector3 animationStartScale;
     private Vector3 fittedScale;
+    private Vector3 parcelLocalCenter;
+    private Quaternion carryLocalRotation;
+    private float pickupCrouch;
+    private float approachDistance;
     private Renderer[] packageRenderers;
     private float carryPose;
     private float action01;
@@ -41,7 +49,8 @@ public class DeliveryPackageController : MonoBehaviour
     private string hint;
     private GUIStyle hintStyle;
 
-    public bool IsCarrying => state == PackageState.PickingUp || state == PackageState.Carried || state == PackageState.Stowing;
+    public bool IsCarrying => state == PackageState.Approaching || state == PackageState.PickingUp ||
+                              state == PackageState.Carried || state == PackageState.Stowing;
     public bool IsStowed => state == PackageState.Stowed && package != null;
     public event System.Action PackageStowed;
     internal System.Func<bool> TryDeliver { get; set; }
@@ -63,13 +72,16 @@ public class DeliveryPackageController : MonoBehaviour
     /// <summary>Returns true when the E press was used for a package action.</summary>
     public bool TryInteract()
     {
-        if (scooter == null || rider == null || scooter.IsMounted || state == PackageState.PickingUp || state == PackageState.Stowing)
+        if (scooter == null || rider == null || scooter.IsMounted)
             return false;
+        if (state == PackageState.Approaching || state == PackageState.PickingUp || state == PackageState.Stowing)
+            return true;
 
         if (IsStowed && CanUnload?.Invoke() == true &&
             FlatDistance(rider.position, scooter.transform.position) <= stowRange)
         {
             package.SetParent(rider, true);
+            SetPackageVisible(true);
             state = PackageState.Carried;
             return true;
         }
@@ -85,7 +97,7 @@ public class DeliveryPackageController : MonoBehaviour
         if (state != PackageState.World) return false;
         Transform nearest = FindNearestPackage();
         if (nearest == null) return false;
-        BeginPickup(nearest);
+        BeginApproach(nearest);
         return true;
     }
 
@@ -108,9 +120,17 @@ public class DeliveryPackageController : MonoBehaviour
 
     private void FixedUpdate()
     {
-        if (riderBody == null || (state != PackageState.PickingUp && state != PackageState.Stowing)) return;
+        if (riderBody == null || (state != PackageState.Approaching && state != PackageState.PickingUp && state != PackageState.Stowing)) return;
+        Vector3 horizontal = Vector3.zero;
+        if (state == PackageState.Approaching && package != null)
+        {
+            Vector3 towardParcel = Vector3.ProjectOnPlane(PackageCenter() - riderBody.position, Vector3.up);
+            float remaining = Mathf.Max(0f, towardParcel.magnitude - approachDistance);
+            float speed = Mathf.Min(1.8f, remaining / Time.fixedDeltaTime);
+            horizontal = towardParcel.normalized * speed;
+        }
         Vector3 velocity = riderBody.linearVelocity;
-        riderBody.linearVelocity = new Vector3(0f, velocity.y, 0f);
+        riderBody.linearVelocity = horizontal + Vector3.up * velocity.y;
         Quaternion rotation = Quaternion.RotateTowards(riderBody.rotation, interactionFacing, 360f * Time.fixedDeltaTime);
         riderBody.MoveRotation(rotation);
     }
@@ -126,15 +146,33 @@ public class DeliveryPackageController : MonoBehaviour
             float speed = riderBody != null ? Vector3.ProjectOnPlane(riderBody.linearVelocity, Vector3.up).magnitude : 0f;
             float bob = Mathf.Sin(Time.time * 8f) * 0.012f * Mathf.Clamp01(speed / 2f);
             float sway = Mathf.Sin(Time.time * 4f) * 1.5f * Mathf.Clamp01(speed / 2f);
-            SetPackagePose(CarryPosition() + Vector3.up * bob,
-                           CarryRotation() * Quaternion.Euler(0f, 0f, sway), fittedScale);
+            Quaternion rotation = CarryRotation() * Quaternion.Euler(0f, 0f, sway);
+            SetPackagePose(CarryPosition(rotation) + Vector3.up * bob, rotation, fittedScale);
         }
+
+        if (characterAnimator == null) return;
+        float grip = 0f;
+        if (state == PackageState.PickingUp) grip = Smooth(Mathf.InverseLerp(0.08f, PickupContact, action01));
+        if (state == PackageState.Carried) grip = carryPose;
+        if (state == PackageState.Stowing && !packageStored) grip = 1f - Smooth(Mathf.InverseLerp(0.68f, 0.92f, action01));
+        characterAnimator.SetParcelGrip(leftGrip, rightGrip, grip);
     }
 
-    private void BeginPickup(Transform target)
+    private void BeginApproach(Transform target)
     {
         package = target;
         packageRenderers = package.GetComponentsInChildren<Renderer>(true);
+        Bounds bounds = CombinedBounds(packageRenderers, package.position);
+        BeginCharacterAction(bounds.center);
+        Vector3 forward = interactionFacing * Vector3.forward;
+        float halfDepth = Mathf.Abs(forward.x) * bounds.extents.x + Mathf.Abs(forward.z) * bounds.extents.z;
+        approachDistance = Mathf.Clamp(halfDepth + 0.32f, 0.48f, 0.78f);
+        animationTime = 0f;
+        state = PackageState.Approaching;
+    }
+
+    private void BeginPickup()
+    {
         foreach (Collider col in package.GetComponentsInChildren<Collider>(true)) col.enabled = false;
         foreach (Rigidbody body in package.GetComponentsInChildren<Rigidbody>(true))
         {
@@ -151,8 +189,13 @@ public class DeliveryPackageController : MonoBehaviour
         float largest = Mathf.Max(bounds.size.x, bounds.size.y, bounds.size.z);
         float fit = largest > 0.7f ? 0.7f / largest : 1f;
         fittedScale = animationStartScale * fit;
+        Vector3 parcelForward = Quaternion.Inverse(interactionFacing) * package.forward;
+        float yaw = Mathf.Atan2(parcelForward.x, parcelForward.z) * Mathf.Rad2Deg;
+        carryLocalRotation = Quaternion.Euler(0f, Mathf.Round(yaw / 90f) * 90f, 0f);
+        CreateGrips();
+        float gripHeight = (leftGrip.position.y + rightGrip.position.y) * 0.5f - rider.position.y;
+        pickupCrouch = Mathf.InverseLerp(1.15f, 0.25f, gripHeight);
         animationTime = 0f;
-        BeginCharacterAction(package.position);
         state = PackageState.PickingUp;
     }
 
@@ -172,14 +215,33 @@ public class DeliveryPackageController : MonoBehaviour
 
     private void UpdateAnimation(float dt)
     {
-        if (state == PackageState.PickingUp)
+        if (state == PackageState.Approaching)
+        {
+            animationTime += dt;
+            if (package != null)
+            {
+                FaceInteraction(dt);
+                float distance = FlatDistance(rider.position, PackageCenter());
+                if ((distance <= approachDistance + 0.06f || riderBody == null) &&
+                    Quaternion.Angle(rider.rotation, interactionFacing) <= 12f)
+                {
+                    BeginPickup();
+                    return;
+                }
+                if (animationTime < 1.8f) return;
+            }
+            state = PackageState.World;
+            package = null;
+            EndCharacterAction();
+        }
+        else if (state == PackageState.PickingUp)
         {
             animationTime += dt;
             float t = Mathf.Clamp01(animationTime / pickupDuration);
             action01 = t;
             FaceInteraction(dt);
-            float lift = Smooth(Mathf.InverseLerp(0.28f, 0.92f, t));
-            Vector3 end = CarryPosition();
+            float lift = Smooth(Mathf.InverseLerp(PickupContact, 0.95f, t));
+            Vector3 end = CarryPosition(CarryRotation());
             Vector3 pos = Vector3.Lerp(animationStartPosition, end, lift)
                           + Vector3.up * (Mathf.Sin(lift * Mathf.PI) * 0.12f);
             SetPackagePose(pos, Quaternion.Slerp(animationStartRotation, CarryRotation(), lift),
@@ -245,7 +307,7 @@ public class DeliveryPackageController : MonoBehaviour
     private void UpdateHint()
     {
         hint = null;
-        if (scooter.IsMounted || state == PackageState.PickingUp || state == PackageState.Stowing) return;
+        if (scooter.IsMounted || state == PackageState.Approaching || state == PackageState.PickingUp || state == PackageState.Stowing) return;
         if (state == PackageState.Carried)
         {
             if (FlatDistance(rider.position, scooter.transform.position) <= stowRange)
@@ -273,14 +335,59 @@ public class DeliveryPackageController : MonoBehaviour
         return best;
     }
 
-    private Vector3 CarryPosition()
+    private Vector3 CarryPosition(Quaternion rotation)
     {
-        return rider.TransformPoint(new Vector3(0f, 1.05f, 0.42f));
+        Vector3 center = rider.TransformPoint(new Vector3(0f, 1.18f, 0.40f));
+        Vector3 parentScale = package.parent != null ? package.parent.lossyScale : Vector3.one;
+        return center - rotation * Vector3.Scale(parcelLocalCenter, Vector3.Scale(fittedScale, parentScale));
     }
 
     private Quaternion CarryRotation()
     {
-        return rider.rotation * Quaternion.Euler(0f, 90f, 0f);
+        return rider.rotation * carryLocalRotation;
+    }
+
+    private Vector3 PackageCenter() => CombinedBounds(packageRenderers, package.position).center;
+
+    private void CreateGrips()
+    {
+        // Combine mesh bounds in parcel space so the grips follow the box through rotation and scaling.
+        Bounds bounds = default;
+        bool hasBounds = false;
+        foreach (Renderer renderer in packageRenderers)
+        {
+            Bounds mesh = renderer.localBounds;
+            Matrix4x4 toParcel = package.worldToLocalMatrix * renderer.localToWorldMatrix;
+            for (int corner = 0; corner < 8; corner++)
+            {
+                Vector3 point = mesh.center + Vector3.Scale(mesh.extents, new Vector3(
+                    (corner & 1) == 0 ? -1f : 1f,
+                    (corner & 2) == 0 ? -1f : 1f,
+                    (corner & 4) == 0 ? -1f : 1f));
+                point = toParcel.MultiplyPoint3x4(point);
+                if (hasBounds) bounds.Encapsulate(point);
+                else { bounds = new Bounds(point, Vector3.zero); hasBounds = true; }
+            }
+        }
+
+        Quaternion toParcelAxes = Quaternion.Inverse(carryLocalRotation);
+        parcelLocalCenter = bounds.center;
+        Vector3 side = toParcelAxes * Vector3.right;
+        Vector3 forward = toParcelAxes * Vector3.forward;
+        float halfWidth = Mathf.Abs(side.x) * bounds.extents.x + Mathf.Abs(side.z) * bounds.extents.z;
+        float halfDepth = Mathf.Abs(forward.x) * bounds.extents.x + Mathf.Abs(forward.z) * bounds.extents.z;
+        Vector3 lowCenter = bounds.center - Vector3.up * (bounds.extents.y * 0.55f) - forward * (halfDepth * 0.3f);
+        leftGrip = CreateGrip("LeftGrip", lowCenter - side * halfWidth, forward, side);
+        rightGrip = CreateGrip("RightGrip", lowCenter + side * halfWidth, forward, -side);
+    }
+
+    private Transform CreateGrip(string gripName, Vector3 position, Vector3 forward, Vector3 inward)
+    {
+        Transform grip = new GameObject(gripName).transform;
+        grip.SetParent(package, false);
+        grip.localPosition = position;
+        grip.localRotation = Quaternion.LookRotation(forward, inward + Vector3.up * 0.25f);
+        return grip;
     }
 
     private Quaternion CargoRotation()
@@ -341,9 +448,10 @@ public class DeliveryPackageController : MonoBehaviour
         float reach = 0f, stow = 0f, bend = 0f, crouch = 0f;
         if (state == PackageState.PickingUp)
         {
-            reach = Mathf.Sin(action01 * Mathf.PI);
-            bend = reach * 24f;
-            crouch = reach * 0.16f;
+            reach = Smooth(Mathf.InverseLerp(0f, PickupContact, action01)) *
+                    (1f - Smooth(Mathf.InverseLerp(PickupContact, 0.92f, action01)));
+            bend = reach * Mathf.Lerp(12f, 55f, pickupCrouch);
+            crouch = reach * pickupCrouch * 0.55f;
         }
         else if (state == PackageState.Stowing)
         {
