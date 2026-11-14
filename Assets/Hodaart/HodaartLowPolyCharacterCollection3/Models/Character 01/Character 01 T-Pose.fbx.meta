@@ -1,7 +1,15 @@
 fileFormatVersion: 2
 guid: 6637352fc5ac31c41adef1bb54286963
+AssetOrigin:
+  serializedVersion: 1
+  productId: 388758
+  packageName: Low Poly Character Collection 3
+  packageVersion: 1.1
+  assetPath: Assets/Hodaart/HodaartLowPolyCharacterCollection3/Models/Character 01/Character
+    01 T-Pose.fbx
+  uploadId: 946460
 ModelImporter:
-  serializedVersion: 22200
+  serializedVersion: 24200
   internalIDToNameTable: []
   externalObjects:
   - first:
@@ -35,7 +43,7 @@ ModelImporter:
     extraExposedTransformPaths: []
     extraUserProperties: []
     clipAnimations: []
-    isReadable: 0
+    isReadable: 1
   meshes:
     lODScreenPercentages: []
     globalScale: 1
@@ -61,6 +69,9 @@ ModelImporter:
     maxBonesPerVertex: 4
     minBoneWeight: 0.001
     optimizeBones: 1
+    generateMeshLods: 0
+    meshLodGenerationFlags: 0
+    maximumMeshLod: -1
     meshOptimizationFlags: -1
     indexFormat: 0
     secondaryUVAngleDistortion: 8
@@ -521,8 +532,7 @@ ModelImporter:
     - name: mixamorig:RightHandIndex4
       parentName: mixamorig:RightHandIndex3
       position: {x: 0.00005628902, y: 0.042069364, z: -0.000000029220246}
-      rotation: {x: -0.0000006466289, y: -0.000000036449478, z: 0.00000006097616,
-        w: 1}
+      rotation: {x: -0.0000006466289, y: -0.000000036449478, z: 0.00000006097616, w: 1}
       scale: {x: 1, y: 1.0000001, z: 1}
     - name: mixamorig:LeftUpLeg
       parentName: mixamorig:Hips
@@ -572,8 +582,7 @@ ModelImporter:
     - name: mixamorig:RightToe_End
       parentName: mixamorig:RightToeBase
       position: {x: 0.0000000027748683, y: 0.06547209, z: 4.0745363e-10}
-      rotation: {x: -0.000000007532435, y: -0.0000000025247573, z: 0.0000000012678356,
-        w: 1}
+      rotation: {x: -0.000000007532435, y: -0.0000000025247573, z: 0.0000000012678356, w: 1}
       scale: {x: 1, y: 1, z: 1}
     - name: Character 01
       parentName: Character 01 T-Pose(Clone)
@@ -604,11 +613,3 @@ ModelImporter:
   userData: 
   assetBundleName: 
   assetBundleVariant: 
-AssetOrigin:
-  serializedVersion: 1
-  productId: 388758
-  packageName: Low Poly Character Collection 3
-  packageVersion: 1.1
-  assetPath: Assets/Hodaart/HodaartLowPolyCharacterCollection3/Models/Character 01/Character
-    01 T-Pose.fbx
-  uploadId: 946460
