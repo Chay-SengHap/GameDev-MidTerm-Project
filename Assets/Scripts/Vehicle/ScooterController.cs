@@ -134,6 +134,7 @@ public class ScooterController : PlayerVehicle
     public Transform RightGrip { get; private set; }
     public Transform LeanPivot => leanPivot;
     public Transform Rider => riderRoot;
+    internal Bounds PedestrianArea { get; set; }
 
     public override float ForwardSpeed => rb != null ? Vector3.Dot(rb.linearVelocity, transform.forward) : 0f;
     public override Rigidbody Body => rb;
@@ -577,6 +578,7 @@ public class ScooterController : PlayerVehicle
                                   ? transform.parent.position : Vector3.zero), lastGoodRotation);
             return;
         }
+        KeepOutOfPedestrianArea();
         lastGoodPosition = rb.position;
         lastGoodRotation = rb.rotation;
 
@@ -685,6 +687,24 @@ public class ScooterController : PlayerVehicle
         LongitudinalAccel = Mathf.Lerp(LongitudinalAccel, rawAccel, 1f - Mathf.Exp(-8f * dt));
 
         if (drive && input.ResetPressed) ResetOntoWheels();
+    }
+
+    private void KeepOutOfPedestrianArea()
+    {
+        Bounds area = PedestrianArea;
+        if (area.size.x <= 0f || area.size.z <= 0f) return;
+        Vector3 current = rb.position;
+        Vector3 start = lastGoodPosition;
+        current.y = start.y = area.center.y;
+        Vector3 movement = current - start;
+        if (movement.sqrMagnitude <= 0.000001f || area.Contains(start)) return;
+        if (!area.IntersectRay(new Ray(start, movement.normalized), out float distance) ||
+            distance > movement.magnitude) return;
+
+        Vector3 outside = start + movement.normalized * Mathf.Max(0f, distance - 0.08f);
+        outside.y = rb.position.y;
+        Teleport(outside, rb.rotation);
+        if (IsMounted) FlashHint("Pedestrian area - park and continue on foot");
     }
 
     private void TryAssistCurb(bool forward, bool touching, float groundHeight, float dt)

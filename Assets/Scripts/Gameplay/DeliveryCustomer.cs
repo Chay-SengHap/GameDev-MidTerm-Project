@@ -9,7 +9,7 @@ public class DeliveryCustomer : MonoBehaviour
     private Animator body;
     private bool hasParcel;
 
-    internal static DeliveryCustomer Create(Transform parking)
+    internal static DeliveryCustomer Create(Transform parking, Vector3? walkingDestination = null)
     {
         var collection = Resources.Load<CityPedestrians>("CityPedestrians");
         var prefab = collection != null ? collection.characters.FirstOrDefault(character => character != null) : null;
@@ -20,9 +20,10 @@ public class DeliveryCustomer : MonoBehaviour
         }
 
         var actor = Instantiate(prefab, parking, false);
-        actor.name = "Restaurant Customer";
+        actor.name = "Delivery Customer";
         actor.transform.localPosition = new Vector3(1.2f, 0.2f, -4.5f);
         actor.transform.localRotation = Quaternion.identity;
+        if (walkingDestination.HasValue) actor.transform.position = walkingDestination.Value;
         foreach (var collider in actor.GetComponentsInChildren<Collider>(true))
             collider.enabled = false;
 

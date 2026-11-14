@@ -25,6 +25,10 @@ public class DeliveryPackageController : MonoBehaviour
     private Vector3 lidClosedPosition;
     private Quaternion lidClosedRotation;
     private Transform package;
+    private GameObject pickupTemplate;
+    private Transform pickupParent;
+    private Transform replacementParcel;
+    private Vector3 pickupPosition;
     private Transform leftGrip;
     private Transform rightGrip;
     private PackageState state;
@@ -53,6 +57,8 @@ public class DeliveryPackageController : MonoBehaviour
                               state == PackageState.Carried || state == PackageState.Stowing;
     public bool IsStowed => state == PackageState.Stowed && package != null;
     public event System.Action PackageStowed;
+    internal event System.Action PackagePickedUp;
+    internal Vector3 PickupPosition => pickupPosition;
     internal System.Func<bool> TryDeliver { get; set; }
     internal System.Func<bool> CanUnload { get; set; }
 
@@ -99,6 +105,16 @@ public class DeliveryPackageController : MonoBehaviour
         if (nearest == null) return false;
         BeginApproach(nearest);
         return true;
+    }
+
+    internal void RestockPickup()
+    {
+        if (state != PackageState.Delivered || pickupTemplate == null) return;
+        package = null;
+        var parcel = Instantiate(pickupTemplate, pickupParent, false);
+        replacementParcel = parcel.transform;
+        parcel.SetActive(true);
+        state = PackageState.World;
     }
 
     internal bool GiveToCustomer(Transform parcelHold)
@@ -173,6 +189,14 @@ public class DeliveryPackageController : MonoBehaviour
 
     private void BeginPickup()
     {
+        if (pickupTemplate == null)
+        {
+            pickupParent = package.parent;
+            pickupPosition = PackageCenter();
+            // Keep a clean copy before the pickup animation modifies the colliders and adds grip points.
+            pickupTemplate = Instantiate(package.gameObject, package.parent, false);
+            pickupTemplate.SetActive(false);
+        }
         foreach (Collider col in package.GetComponentsInChildren<Collider>(true)) col.enabled = false;
         foreach (Rigidbody body in package.GetComponentsInChildren<Rigidbody>(true))
         {
@@ -251,6 +275,7 @@ public class DeliveryPackageController : MonoBehaviour
                 package.SetParent(rider, true);
                 state = PackageState.Carried;
                 EndCharacterAction();
+                PackagePickedUp?.Invoke();
             }
         }
         else if (state == PackageState.Stowing)
@@ -319,6 +344,14 @@ public class DeliveryPackageController : MonoBehaviour
 
     private Transform FindNearestPackage()
     {
+        if (replacementParcel != null)
+        {
+            Renderer renderer = replacementParcel.GetComponentInChildren<Renderer>();
+            return renderer != null &&
+                FlatDistance(rider.position, renderer.bounds.ClosestPoint(rider.position)) < pickupRange
+                ? replacementParcel : null;
+        }
+
         Transform best = null;
         float bestDistance = pickupRange;
         foreach (GameObject piece in HierarchyGroup.AllPieces())
