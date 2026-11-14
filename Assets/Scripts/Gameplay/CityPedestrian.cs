@@ -442,23 +442,23 @@ public class CityPedestrian : MonoBehaviour
         Vector3 up = transform.up;
         Vector3 forward = transform.forward;
 
-        // 1. Place pelvis (Hips) ON TOP of the bench planks, shifted slightly back from the front edge
+        // 1. Place pelvis (Hips) ON TOP of the bench/chair surface (+0.16m so shorts/butt rest cleanly on top)
         float topPlankY = seatSurfaceY > 0.01f ? seatSurfaceY : transform.position.y + 0.45f;
-        Vector3 hipWorld = transform.position - forward * 0.16f;
-        hipWorld.y = topPlankY + 0.06f;
+        Vector3 hipWorld = transform.position - forward * 0.15f;
+        hipWorld.y = topPlankY + 0.16f;
         hips.position = hipWorld;
 
-        // 2. Pitch upper legs forward (-78 deg) with knees tucked neatly parallel (no outward spread)
+        // 2. Pitch upper legs forward (-74 deg) with knees tucked neatly parallel
         if (leftUpLeg != null)
-            leftUpLeg.rotation = Quaternion.AngleAxis(-78f, right) * leftUpLeg.rotation;
+            leftUpLeg.rotation = Quaternion.AngleAxis(-74f, right) * leftUpLeg.rotation;
         if (rightUpLeg != null)
-            rightUpLeg.rotation = Quaternion.AngleAxis(-78f, right) * rightUpLeg.rotation;
+            rightUpLeg.rotation = Quaternion.AngleAxis(-74f, right) * rightUpLeg.rotation;
 
-        // 3. Bend knees (+78 deg) so shins hang straight down outside the front edge of the bench
+        // 3. Bend knees (+76 deg) so shins hang straight down outside the front edge of the seat
         if (leftLeg != null)
-            leftLeg.rotation = Quaternion.AngleAxis(78f, right) * leftLeg.rotation;
+            leftLeg.rotation = Quaternion.AngleAxis(76f, right) * leftLeg.rotation;
         if (rightLeg != null)
-            rightLeg.rotation = Quaternion.AngleAxis(78f, right) * rightLeg.rotation;
+            rightLeg.rotation = Quaternion.AngleAxis(76f, right) * rightLeg.rotation;
 
         if (leftFoot != null)
             leftFoot.rotation = Quaternion.AngleAxis(-2f, right) * leftFoot.rotation;

@@ -9,7 +9,8 @@ using UnityEngine.SceneManagement;
 public static class SetupCityPedestrians
 {
     private const string CollectionPath = "Assets/Resources/CityPedestrians.asset";
-    private const int DefaultPopulation = 58;
+    private const string CoffeeChairPrefabPath = "Assets/SimplePoly City - Low Poly Assets/Prefab/Props/Props_Coffee shop chair.prefab";
+    private const int DefaultPopulation = 78;
 
     [InitializeOnLoadMethod]
     private static void AutoSetUpOnLoad()
@@ -36,10 +37,11 @@ public static class SetupCityPedestrians
             ? activeScene.GetRootGameObjects().FirstOrDefault(go => go != null && go.name == CityPedestrians.RootObjectName)
             : null;
         int currentCount = sceneRoot != null ? sceneRoot.GetComponentsInChildren<CityPedestrian>(true).Length : 0;
+        bool hasCurrentSceneVersion = sceneRoot != null && sceneRoot.transform.Find(CityPedestrians.VersionMarkerName) != null;
 
         if (existing == null || existing.characters == null || existing.characters.Length < 20 ||
             existing.population < DefaultPopulation || existing.setupVersion != CityPedestrians.CurrentSetupVersion ||
-            currentCount < DefaultPopulation)
+            currentCount < DefaultPopulation || !hasCurrentSceneVersion)
         {
             SetUpInternal(selectAsset: false);
         }
@@ -144,7 +146,8 @@ public static class SetupCityPedestrians
         collection.walk = walk;
         collection.idle = idle;
         collection.greeting = greeting;
-        if (collection.population <= 38)
+        collection.coffeeChairPrefab = AssetDatabase.LoadAssetAtPath<GameObject>(CoffeeChairPrefabPath);
+        if (collection.population < DefaultPopulation)
             collection.population = DefaultPopulation;
         collection.setupVersion = CityPedestrians.CurrentSetupVersion;
 

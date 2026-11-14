@@ -43,5 +43,6 @@ MonoBehaviour:
   - {fileID: 7400000, guid: c361c2336b8c17d41ba567c1f26267b5, type: 2}
   - {fileID: 7400000, guid: a6dabff2c698b1f44a7d1a5dcde34da7, type: 2}
   greeting: {fileID: 7400000, guid: 74aa4c68caae9974795d0fca0fba6134, type: 2}
-  population: 58
-  setupVersion: 4
+  coffeeChairPrefab: {fileID: 100000, guid: 97229e82747352a43b48688ec573f8e4, type: 3}
+  population: 78
+  setupVersion: 7
