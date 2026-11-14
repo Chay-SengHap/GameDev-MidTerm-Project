@@ -14,6 +14,7 @@ public class TimedDelivery : MonoBehaviour
     [SerializeField] private Vector3[] waypoints = System.Array.Empty<Vector3>();
     [SerializeField] private Vector2 parkingSize = new Vector2(6f, 2.8f);
     [SerializeField] private Shader markerShader;
+    [SerializeField, Min(0.5f)] private float scooterGuideDistance = 12f;
 
     private MissionState state;
     private CountdownTimer timer;
@@ -95,7 +96,9 @@ public class TimedDelivery : MonoBehaviour
     {
         Transform courier = !scooter.IsMounted && scooter.Rider != null ? scooter.Rider : scooter.transform;
         bool delivering = state == MissionState.Delivering;
-        if (delivering) UpdateDelivery(courier);
+        Vector3 toScooter = FlatDelta(courier.position, scooter.transform.position);
+        bool returnToScooter = !scooter.IsMounted && toScooter.sqrMagnitude >= scooterGuideDistance * scooterGuideDistance;
+        if (delivering) UpdateDelivery(returnToScooter);
         bool walkingToCustomer = customer != null && delivering && readyForHandoff && packages.IsCarrying;
         hud.UpdateMinimap(courier, delivering, waypoints,
             walkingToCustomer || (delivering && IsInParkingZone()) ? waypoints.Length : waypointIndex,
@@ -104,39 +107,56 @@ public class TimedDelivery : MonoBehaviour
         switch (state)
         {
             case MissionState.WaitingForPackage:
-                ShowObjective(packages.IsCarrying ? "Load the parcel onto the scooter" : "Pick up the parcel");
+                ShowObjective(returnToScooter ? "Return to the scooter" :
+                    packages.IsCarrying ? "Load the parcel onto the scooter" : "Pick up the parcel");
                 break;
             case MissionState.Delivering: break;
             default:
                 if (Keyboard.current?.rKey.wasPressedThisFrame == true) Retry();
                 break;
         }
+
+        UpdatePointer(courier, delivering, returnToScooter, toScooter);
     }
 
-    private void UpdateDelivery(Transform courier)
+    private void UpdateDelivery(bool returnToScooter)
     {
         hud.ShowTime(timer.Remaining);
         bool inZone = IsInParkingZone();
         parkedTime = inZone && ScooterStopped() ? parkedTime + Time.deltaTime : 0f;
         readyForHandoff = parkedTime >= 0.5f;
 
-        if (!inZone) AdvanceWaypoints(courier.position);
-        if (readyForHandoff)
+        if (!inZone) AdvanceWaypoints(scooter.transform.position);
+        if (returnToScooter)
         {
-            hud.HidePointer();
+            ShowObjective("Return to the scooter");
+        }
+        else if (readyForHandoff)
+        {
             ShowObjective(scooter.IsMounted ? "Press E to get off the scooter" :
                 packages.IsStowed ? "Press E beside the scooter to take the parcel" :
                 NearCustomer() ? "Press E to hand over the parcel" : "Walk to the waiting customer");
         }
         else
         {
-            if (inZone) hud.HidePointer();
-            else
-            {
-                Vector3 target = waypointIndex < waypoints.Length ? waypoints[waypointIndex] : transform.position;
-                hud.PointArrow(target - courier.position, Camera.main);
-            }
             ShowObjective(inZone ? "Stop the scooter in the delivery zone" : "Ride to the blue marker");
+        }
+    }
+
+    private void UpdatePointer(Transform courier, bool delivering, bool returnToScooter, Vector3 toScooter)
+    {
+        if ((state == MissionState.WaitingForPackage || delivering) && returnToScooter)
+        {
+            hud.PointArrow(toScooter, Camera.main);
+        }
+        else if (delivering && !IsInParkingZone())
+        {
+            Vector3 target = waypointIndex < waypoints.Length ? waypoints[waypointIndex] : transform.position;
+            hud.PointArrow(target - courier.position, Camera.main);
+        }
+        else
+        {
+            hud.HidePointer();
         }
     }
 
