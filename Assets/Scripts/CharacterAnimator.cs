@@ -12,6 +12,7 @@ using UnityEngine;
 ///      * head turning toward where the camera looks
 /// Bones are found by name (Hips, Spine, LeftUpLeg ...) so it works with this courier rig.
 /// </summary>
+[DefaultExecutionOrder(125)] // Evaluate the arms after the parcel's LateUpdate has positioned its grips.
 public class CharacterAnimator : MonoBehaviour
 {
     [Header("Clips (from the model)")]
@@ -54,6 +55,8 @@ public class CharacterAnimator : MonoBehaviour
     private float idleW = 1f, walkW, runW;
 
     private Bone hips, spine, spine1, spine2, neck, head, leftArm, rightArm, leftForeArm, rightForeArm;
+    private Bone leftHand, rightHand;
+    private Transform leftPalm, rightPalm;
     private Bone leftUpLeg, leftLeg, leftFoot, rightUpLeg, rightLeg, rightFoot;
     private Bone[] allBones;
     private float legLength = 0.9f;
@@ -67,6 +70,8 @@ public class CharacterAnimator : MonoBehaviour
     private float crouchAmount;
     private float headAngle;
     private float deliveryCarry, deliveryReach, deliveryStow, deliveryBend, deliveryCrouch;
+    private Transform leftGrip, rightGrip;
+    private float gripWeight;
 
     // Remembers the animated pose so procedural offsets never accumulate on bones the clips don't key.
     private class Bone
@@ -116,6 +121,13 @@ public class CharacterAnimator : MonoBehaviour
         deliveryStow = Mathf.Clamp01(stow);
         deliveryBend = bend;
         deliveryCrouch = crouch;
+    }
+
+    internal void SetParcelGrip(Transform left, Transform right, float weight)
+    {
+        leftGrip = left;
+        rightGrip = right;
+        gripWeight = weight;
     }
 
     private void Awake()
@@ -197,6 +209,10 @@ public class CharacterAnimator : MonoBehaviour
         rightArm = new Bone(Find(root, "RightArm"));
         leftForeArm = new Bone(Find(root, "LeftForeArm"));
         rightForeArm = new Bone(Find(root, "RightForeArm"));
+        leftHand = new Bone(Find(root, "LeftHand"));
+        rightHand = new Bone(Find(root, "RightHand"));
+        leftPalm = leftHand.t != null ? Find(leftHand.t, "attach-lefthand") : null;
+        rightPalm = rightHand.t != null ? Find(rightHand.t, "attach-righthand") : null;
         leftUpLeg = new Bone(Find(root, "LeftUpLeg"));
         leftLeg = new Bone(Find(root, "LeftLeg"));
         leftFoot = new Bone(Find(root, "LeftFoot"));
@@ -204,7 +220,7 @@ public class CharacterAnimator : MonoBehaviour
         rightLeg = new Bone(Find(root, "RightLeg"));
         rightFoot = new Bone(Find(root, "RightFoot"));
 
-        allBones = new[] { hips, spine, spine1, spine2, neck, head, leftArm, rightArm, leftForeArm, rightForeArm,
+        allBones = new[] { hips, spine, spine1, spine2, neck, head, leftArm, rightArm, leftForeArm, rightForeArm, leftHand, rightHand,
                            leftUpLeg, leftLeg, leftFoot, rightUpLeg, rightLeg, rightFoot };
 
         if (leftUpLeg.t != null && leftLeg.t != null && leftFoot.t != null)
@@ -384,6 +400,12 @@ public class CharacterAnimator : MonoBehaviour
             rightForeArm.BlendLocal(rightLower, deliveryWeight);
         }
 
+        if (gripWeight > 0f)
+        {
+            SolveArmGrip(leftArm.t, leftForeArm.t, leftHand.t, leftPalm, leftGrip, -right);
+            SolveArmGrip(rightArm.t, rightForeArm.t, rightHand.t, rightPalm, rightGrip, right);
+        }
+
         // --- Head turns toward where the camera is looking ---
         float targetHead = 0f;
         Transform cam = controller.CameraTransform;
@@ -401,6 +423,46 @@ public class CharacterAnimator : MonoBehaviour
         head.Rotate(headAngle * 0.6f, up);
 
         foreach (var b in allBones) b.End();
+    }
+
+    private void SolveArmGrip(Transform upper, Transform forearm, Transform hand, Transform palm, Transform grip, Vector3 outward)
+    {
+        if (upper == null || forearm == null || hand == null || grip == null) return;
+
+        // Aim the hand's longitudinal axis along the box and its palm toward the box.
+        Vector3 palmOffset = palm != null ? hand.InverseTransformPoint(palm.position) : Vector3.zero;
+        Vector3 fingerAxis = hand.localPosition.x >= 0f ? Vector3.right : Vector3.left;
+        Quaternion wristRotation = grip.rotation * Quaternion.Inverse(Quaternion.LookRotation(fingerAxis, Vector3.down));
+        Vector3 wristTarget = grip.position - wristRotation * Vector3.Scale(palmOffset, hand.lossyScale);
+
+        Vector3 shoulder = upper.position;
+        float upperLength = Vector3.Distance(shoulder, forearm.position);
+        float lowerLength = Vector3.Distance(forearm.position, hand.position);
+        Vector3 toWrist = wristTarget - shoulder;
+        if (upperLength < 0.001f || lowerLength < 0.001f || toWrist.sqrMagnitude < 0.000001f) return;
+
+        Vector3 direction = toWrist.normalized;
+        float distance = Mathf.Clamp(toWrist.magnitude,
+            Mathf.Abs(upperLength - lowerLength) + 0.001f, upperLength + lowerLength - 0.001f);
+        wristTarget = shoulder + direction * distance;
+
+        // The two bone lengths and shoulder-to-wrist distance form a triangle.
+        float along = (upperLength * upperLength - lowerLength * lowerLength + distance * distance) / (2f * distance);
+        float offset = Mathf.Sqrt(Mathf.Max(0f, upperLength * upperLength - along * along));
+        Vector3 elbowDirection = Vector3.ProjectOnPlane(outward * 0.65f - transform.up, direction).normalized;
+        if (elbowDirection.sqrMagnitude < 0.001f)
+            elbowDirection = Vector3.ProjectOnPlane(transform.forward, direction).normalized;
+        Vector3 elbowTarget = shoulder + direction * along + elbowDirection * offset;
+
+        Quaternion upperStart = upper.localRotation;
+        Quaternion lowerStart = forearm.localRotation;
+        Quaternion handStart = hand.localRotation;
+        upper.rotation = Quaternion.FromToRotation(forearm.position - shoulder, elbowTarget - shoulder) * upper.rotation;
+        forearm.rotation = Quaternion.FromToRotation(hand.position - forearm.position, wristTarget - forearm.position) * forearm.rotation;
+        hand.rotation = wristRotation;
+        upper.localRotation = Quaternion.Slerp(upperStart, upper.localRotation, gripWeight);
+        forearm.localRotation = Quaternion.Slerp(lowerStart, forearm.localRotation, gripWeight);
+        hand.localRotation = Quaternion.Slerp(handStart, hand.localRotation, gripWeight);
     }
 
     // Thigh swings forward, shin swings back twice as much, foot is counter-rotated to stay flat.

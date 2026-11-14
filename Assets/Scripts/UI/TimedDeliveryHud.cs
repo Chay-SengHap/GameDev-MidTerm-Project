@@ -4,8 +4,13 @@ using UnityEngine;
 public class TimedDeliveryHud : MonoBehaviour
 {
     private static readonly Color Blue = new Color(0.27f, 0.75f, 1f);
-    private UnityEngine.UI.Text objective, clock, arrow, resultTitle, resultDetail;
-    private RectTransform resultPanel;
+    private UnityEngine.UI.Text objective, clock, resultTitle, resultDetail;
+    private RectTransform resultPanel, pointer;
+    private float pointerAngle;
+    private RectTransform canvasRoot;
+    private DeliveryMinimap minimap;
+    private RectTransform minimapFrame;
+    private GameMenu menu;
     private Font font;
     private int lastSecond = -1;
 
@@ -15,6 +20,7 @@ public class TimedDeliveryHud : MonoBehaviour
         var root = new GameObject("Timed Delivery HUD", typeof(RectTransform), typeof(Canvas),
             typeof(UnityEngine.UI.CanvasScaler), typeof(UnityEngine.UI.GraphicRaycaster));
         root.transform.SetParent(transform, false);
+        canvasRoot = (RectTransform)root.transform;
         var canvas = root.GetComponent<Canvas>();
         canvas.renderMode = RenderMode.ScreenSpaceOverlay;
         canvas.sortingOrder = 30;
@@ -28,9 +34,11 @@ public class TimedDeliveryHud : MonoBehaviour
         header.gameObject.AddComponent<UnityEngine.UI.Image>().color = new Color(0.04f, 0.09f, 0.14f, 0.9f);
         objective = Label(header, "Objective", Vector2.zero, new Vector2(470f, 50f), 24);
         clock = Label(root.transform, "Countdown", new Vector2(0f, -104f), new Vector2(150f, 50f), 38, new Vector2(0.5f, 1f));
-        arrow = Label(root.transform, "Guiding arrow", new Vector2(0f, -167f), new Vector2(90f, 80f), 58, new Vector2(0.5f, 1f));
-        arrow.text = "▲";
-        arrow.color = Blue;
+        pointer = Rect(root.transform, "Delivery pointer", new Vector2(0.5f, 1f),
+            new Vector2(0f, -174f), new Vector2(78f, 78f));
+        var graphic = pointer.gameObject.AddComponent<DeliveryPointerGraphic>();
+        graphic.color = Blue;
+        graphic.raycastTarget = false;
         SetNavigationVisible(false);
 
         resultPanel = Rect(root.transform, "Delivery result", new Vector2(0.5f, 0.5f),
@@ -49,6 +57,34 @@ public class TimedDeliveryHud : MonoBehaviour
         resultPanel.gameObject.SetActive(false);
     }
 
+    internal void BuildMinimap(UnityEngine.SceneManagement.Scene scene)
+    {
+        menu = FindFirstObjectByType<GameMenu>();
+        var frame = minimapFrame = Rect(canvasRoot, "City minimap", new Vector2(0f, 1f), new Vector2(24f, -24f), new Vector2(280f, 280f));
+        frame.pivot = new Vector2(0f, 1f);
+        var border = frame.gameObject.AddComponent<UnityEngine.UI.Image>();
+        border.color = new Color32(12, 23, 34, 244);
+        border.raycastTarget = false;
+        var viewport = Rect(frame, "Map viewport", new Vector2(0.5f, 0.5f), Vector2.zero, new Vector2(268f, 268f));
+        viewport.gameObject.AddComponent<UnityEngine.UI.RectMask2D>();
+        var background = viewport.gameObject.AddComponent<UnityEngine.UI.RawImage>();
+        background.raycastTarget = false;
+        background.color = new Color32(191, 199, 209, 255);
+        var overlay = Rect(viewport, "Route and markers", new Vector2(0.5f, 0.5f), Vector2.zero, viewport.sizeDelta);
+        minimap = overlay.gameObject.AddComponent<DeliveryMinimap>();
+        minimap.raycastTarget = false;
+        if (!minimap.Build(scene, background, frame)) frame.gameObject.SetActive(false);
+    }
+
+    internal void UpdateMinimap(Transform courier, bool routeActive, Vector3[] waypoints, int nextWaypoint, Vector3 destination)
+    {
+        if (minimap == null || !minimap.Ready) return;
+        GameObject frame = minimapFrame.gameObject;
+        bool visible = (menu == null || !menu.IsOpen) && !resultPanel.gameObject.activeSelf;
+        if (frame.activeSelf != visible) frame.SetActive(visible);
+        if (visible) minimap.Track(courier, routeActive, waypoints, nextWaypoint, destination);
+    }
+
     internal void ShowObjective(string text) => objective.text = text;
 
     internal void ShowTime(float remaining)
@@ -62,19 +98,31 @@ public class TimedDeliveryHud : MonoBehaviour
 
     internal void PointArrow(Vector3 direction, Camera camera)
     {
-        if (camera == null) return;
         direction.y = 0f;
-        if (direction.sqrMagnitude < 0.01f) return;
+        if (camera == null || direction.sqrMagnitude < 0.25f || (menu != null && menu.IsOpen))
+        {
+            HidePointer();
+            return;
+        }
+
         Vector3 right = Vector3.ProjectOnPlane(camera.transform.right, Vector3.up).normalized;
         Vector3 forward = Vector3.Cross(right, Vector3.up);
-        float angle = Mathf.Atan2(Vector3.Dot(direction, right), Vector3.Dot(direction, forward)) * Mathf.Rad2Deg;
-        arrow.rectTransform.localRotation = Quaternion.Euler(0f, 0f, -angle);
+        float target = -Mathf.Atan2(Vector3.Dot(direction, right), Vector3.Dot(direction, forward)) * Mathf.Rad2Deg;
+        if (!pointer.gameObject.activeSelf)
+            pointerAngle = target;
+        else if (Mathf.Abs(Mathf.DeltaAngle(pointerAngle, target)) > 2f)
+            pointerAngle = Mathf.MoveTowardsAngle(pointerAngle, target, 420f * Time.deltaTime);
+
+        pointer.localRotation = Quaternion.Euler(0f, 0f, pointerAngle);
+        pointer.gameObject.SetActive(true);
     }
+
+    internal void HidePointer() => pointer.gameObject.SetActive(false);
 
     internal void SetNavigationVisible(bool visible)
     {
         clock.gameObject.SetActive(visible);
-        arrow.gameObject.SetActive(visible);
+        if (!visible) HidePointer();
     }
 
     internal void ShowResult(string title, string detail)
@@ -110,5 +158,27 @@ public class TimedDeliveryHud : MonoBehaviour
         rect.anchoredPosition = position;
         rect.sizeDelta = size;
         return rect;
+    }
+}
+
+[RequireComponent(typeof(CanvasRenderer))]
+internal sealed class DeliveryPointerGraphic : UnityEngine.UI.Graphic
+{
+    protected override void OnPopulateMesh(UnityEngine.UI.VertexHelper mesh)
+    {
+        mesh.Clear();
+        AddArrow(mesh, 1.17f, new Color32(9, 22, 35, 255));
+        AddArrow(mesh, 1f, color);
+    }
+
+    private static void AddArrow(UnityEngine.UI.VertexHelper mesh, float scale, Color32 tint)
+    {
+        int start = mesh.currentVertCount;
+        mesh.AddVert(new Vector2(0f, 31f) * scale, tint, Vector2.zero);
+        mesh.AddVert(new Vector2(24f, -22f) * scale, tint, Vector2.zero);
+        mesh.AddVert(new Vector2(0f, -10f) * scale, tint, Vector2.zero);
+        mesh.AddVert(new Vector2(-24f, -22f) * scale, tint, Vector2.zero);
+        mesh.AddTriangle(start, start + 1, start + 2);
+        mesh.AddTriangle(start, start + 2, start + 3);
     }
 }

@@ -110,6 +110,8 @@ public class CityPedestrian : MonoBehaviour
             SetupRuntime();
     }
 
+    internal void SetLookPoint(Vector3 point) => lookAt = point;
+
     private void Start()
     {
         if (!Application.isPlaying)
