@@ -18,8 +18,8 @@ using UnityEngine;
 ///         │   └ Front Wheel  - spins with the road speed
 ///         ├ Rear Wheel       - spins (locks while the rear brake is held)
 ///         └ Side Stand       - folds up while riding, comes down when parked
-/// Physics: Unity's physics engine drives it through two WheelColliders (suspension, tyre grip, engine torque on the
-/// rear wheel, brakes, steering on the front). The body is kept upright (it can't fall over); the lean into
+/// Physics: Unity's physics engine drives it through two WheelColliders (suspension, tyre grip, shared engine torque,
+/// brakes, steering on the front). The body is kept upright (it can't fall over); the lean into
 /// corners is visual. Rider body motion lives in <see cref="ScooterRiderMotion"/>.
 /// </summary>
 [RequireComponent(typeof(Rigidbody), typeof(VehicleInput))]
@@ -62,7 +62,7 @@ public class ScooterController : PlayerVehicle
     [Header("Wheels & Suspension (physics)")]
     [Tooltip("Scooter mass in kg (the rider is not simulated as a separate body).")]
     [SerializeField] private float mass = 180f;
-    [SerializeField] private float suspensionDistance = 0.12f;
+    [SerializeField] private float suspensionDistance = 0.24f;
     [SerializeField] private float springStrength = 35000f;
     [SerializeField] private float springDamper = 3200f;
     [Tooltip("Tyre grip along the rolling direction (acceleration / braking).")]
@@ -109,6 +109,10 @@ public class ScooterController : PlayerVehicle
 
     [Header("Ground")]
     [SerializeField] private LayerMask groundLayers = ~0;
+
+    private const float MaxCurbHeight = 0.25f;
+    private const float MaxCurbAssistSpeed = 4f;
+    private const float MaxCurbLiftSpeed = 1.6f;
 
     // ---- State read by ScooterRiderMotion / UI ----
     public bool IsMounted { get; private set; }
@@ -419,14 +423,14 @@ public class ScooterController : PlayerVehicle
 
         if (designerColliders) { SetInertia(); return; }   // keep colliders the designer added
 
-        // Body box above the wheels: only the wheels touch the road, the box hits walls and cars.
+        // Raise the low-friction body box clear of curbs while keeping coverage for walls and cars.
         var bodyMaterial = new PhysicsMaterial("ScooterBody")
         {
-            dynamicFriction = 0.2f, staticFriction = 0.2f, bounciness = 0f,
+            dynamicFriction = 0f, staticFriction = 0f, bounciness = 0f,
             frictionCombine = PhysicsMaterialCombine.Minimum, bounceCombine = PhysicsMaterialCombine.Minimum,
         };
         Bounds all = LocalBounds(leanPivot.GetComponentsInChildren<MeshRenderer>(), transform);
-        float bottom = wheelRadius + 0.08f;
+        float bottom = wheelRadius + 0.22f;
         float top = Mathf.Max(all.max.y, 1.45f);
         var body = gameObject.AddComponent<BoxCollider>();
         body.center = new Vector3(0f, (bottom + top) * 0.5f, all.center.z);
@@ -606,7 +610,9 @@ public class ScooterController : PlayerVehicle
         steerAngle = SteerAmount * steerLimit;
         frontCollider.steerAngle = steerAngle;
 
-        bool touching = frontCollider.isGrounded || rearCollider.isGrounded;
+        bool frontGrounded = frontCollider.GetGroundHit(out WheelHit frontGround);
+        bool rearGrounded = rearCollider.GetGroundHit(out WheelHit rearGround);
+        bool touching = frontGrounded || rearGrounded;
         if (touching) lastGroundedTime = Time.time;
         IsGrounded = Time.time - lastGroundedTime < 0.15f;
 
@@ -634,8 +640,9 @@ public class ScooterController : PlayerVehicle
         if (!drive) { frontBrake = rearBrakeTorque = brakeDeceleration * m * r; motor = 0f; }   // parked / held
         if (speed01 >= 1f && motor > 0f) motor = 0f;                                         // top speed
 
-        rearCollider.motorTorque = motor;
-        frontCollider.motorTorque = 0f;
+        float groundedWheelTorque = frontGrounded && rearGrounded ? motor * 0.5f : motor;
+        frontCollider.motorTorque = frontGrounded ? groundedWheelTorque : 0f;
+        rearCollider.motorTorque = rearGrounded ? groundedWheelTorque : 0f;
         frontCollider.brakeTorque = frontBrake;
         rearCollider.brakeTorque = rearBrakeTorque;
         SetGrip(rearCollider, forwardGrip, rearBrake && absSpeed > 2f ? rearBrakeSidewaysGrip : sidewaysGrip);
@@ -663,12 +670,68 @@ public class ScooterController : PlayerVehicle
             rb.AddForce(Physics.gravity * (airGravity - 1f), ForceMode.Acceleration);
         }
 
+        if (motor != 0f && Mathf.Abs(throttle) > 0.05f && flat.sqrMagnitude < MaxCurbAssistSpeed * MaxCurbAssistSpeed)
+        {
+            bool forward = motor > 0f;
+            WheelHit ground = forward
+                ? (frontGrounded ? frontGround : rearGround)
+                : (rearGrounded ? rearGround : frontGround);
+            TryAssistCurb(forward, touching, ground.point.y, dt);
+        }
+
         lateralAccel = touching ? speed * rb.angularVelocity.y : 0f;
         float rawAccel = (speed - lastForwardSpeed) / dt;
         lastForwardSpeed = speed;
         LongitudinalAccel = Mathf.Lerp(LongitudinalAccel, rawAccel, 1f - Mathf.Exp(-8f * dt));
 
         if (drive && input.ResetPressed) ResetOntoWheels();
+    }
+
+    private void TryAssistCurb(bool forward, bool touching, float groundHeight, float dt)
+    {
+        if (!touching)
+        {
+            // Both wheel rays can briefly lose the road as the chassis rises toward the curb.
+            float trailingZ = forward ? rearContactZ : frontContactZ;
+            Vector3 probe = transform.TransformPoint(0f, 0.05f, trailingZ);
+            if (!IsGrounded ||
+                !Physics.Raycast(probe, Vector3.down, out RaycastHit road, MaxCurbHeight + 0.08f,
+                    groundLayers, QueryTriggerInteraction.Ignore) ||
+                road.collider.attachedRigidbody != null || road.normal.y < 0.85f)
+                return;
+            groundHeight = road.point.y;
+        }
+
+        Vector3 direction = forward
+            ? Quaternion.AngleAxis(steerAngle, Vector3.up) * transform.forward
+            : -transform.forward;
+        direction = Vector3.ProjectOnPlane(direction, Vector3.up).normalized;
+        Vector3 origin = (forward ? frontCollider : rearCollider).transform.position;
+        origin.y = groundHeight + 0.06f;
+
+        float reach = wheelRadius + MaxCurbAssistSpeed * dt;
+        if (!Physics.Raycast(origin, direction, out RaycastHit face, reach, groundLayers, QueryTriggerInteraction.Ignore) ||
+            face.collider.attachedRigidbody != null || Mathf.Abs(face.normal.y) > 0.25f)
+            return;
+
+        // Look just past the face for a walkable top on this same static obstacle.
+        Vector3 landing = face.point - face.normal * 0.05f;
+        landing.y = groundHeight + MaxCurbHeight + 0.02f;
+        if (!Physics.Raycast(landing, Vector3.down, out RaycastHit top, MaxCurbHeight, groundLayers, QueryTriggerInteraction.Ignore) ||
+            top.collider != face.collider || top.normal.y < 0.85f || top.point.y - groundHeight > MaxCurbHeight)
+            return;
+
+        // Raise the chassis only enough to reach the curb. Wheel torque continues to move it across.
+        float remainingRise = top.point.y + 0.02f - rb.position.y;
+        if (remainingRise <= 0f)
+            return;
+
+        Vector3 velocity = rb.linearVelocity;
+        float liftSpeed = Mathf.Min(MaxCurbLiftSpeed, remainingRise / dt);
+        velocity.y = Mathf.Max(velocity.y, liftSpeed);
+        float approachSpeed = Vector3.Dot(velocity, direction);
+        float forwardAssist = Mathf.Clamp(1.5f - approachSpeed, 0f, 8f * dt);
+        rb.linearVelocity = velocity + direction * forwardAssist;
     }
 
     // =====================================================================================
