@@ -590,45 +590,35 @@ public class TrafficCar : MonoBehaviour
     private void AtRoadEnd()
     {
         float lane = sys.laneOffsetFromCurb;
-        bool hasSideRoad = false;
-        if (TryRoadEndTurn(-1f, Mathf.Max(sys.turnRadius, aheadDist - lane), ref hasSideRoad) ||
-            TryRoadEndTurn(1f, Mathf.Max(sys.minTurnRadius, lane), ref hasSideRoad)) return;
+        if (TryRoadEndTurn(-1f, Mathf.Max(sys.turnRadius, aheadDist - lane)) ||
+            TryRoadEndTurn(1f, Mathf.Max(sys.minTurnRadius, lane))) return;
 
-        float radius = Mathf.Max(sys.minTurnRadius * 0.8f, (roadWidth - 2f * lane) * 0.5f);
-        if ((hasSideRoad || lightAhead != null || !TryTurn(-1f, 180f, radius)) &&
-            aheadDist < halfLength + 3f)
-            roadBlocked = true;
+        // Keep approaching at corner speed while there is room to move. The regular
+        // movement check protects the footprint while we look for a turn from closer in.
+        roadBlocked = aheadDist <= halfLength + 0.5f;
     }
 
-    private bool TryRoadEndTurn(float sign, float preferredRadius, ref bool hasSideRoad)
+    private bool TryRoadEndTurn(float sign, float preferredRadius)
     {
         Vector3 exitDirection = Right(heading) * sign;
         Quaternion exitRotation = Quaternion.Euler(0f, HeadingYaw(heading) + sign * 90f +
             (sys.modelFacesPositiveZ ? 0f : 180f), 0f);
 
         if (TryTurn(sign, 90f, preferredRadius)) return true;
-        hasSideRoad |= ExitContinues(preferredRadius);
-
         // A corner can fit a tighter or wider arc than the default for this lane.
         for (int offset = 1; offset <= 2; offset++)
         {
             float tighter = preferredRadius - offset;
-            if (tighter >= sys.minTurnRadius && TryRadius(tighter, ref hasSideRoad)) return true;
-            if (TryRadius(preferredRadius + offset, ref hasSideRoad)) return true;
+            if (tighter >= sys.minTurnRadius && TryRadius(tighter)) return true;
+            if (TryRadius(preferredRadius + offset)) return true;
         }
         return false;
 
-        bool TryRadius(float radius, ref bool sideRoad)
-        {
-            if (!ExitContinues(radius)) return false;
-            sideRoad = true;
-            return TryTurn(sign, 90f, radius);
-        }
-
-        bool ExitContinues(float radius)
+        bool TryRadius(float radius)
         {
             Vector3 exit = pos + (heading + exitDirection) * radius;
-            return OnRoad(exit + exitDirection * (halfLength * 2f + 2f), exitRotation);
+            return OnRoad(exit + exitDirection * (halfLength * 2f + 2f), exitRotation) &&
+                TryTurn(sign, 90f, radius);
         }
     }
 
@@ -758,7 +748,7 @@ public class TrafficCar : MonoBehaviour
     {
         // Desired speed: slower through corners and junctions.
         float desired = sys.cruiseSpeed * desiredSpeedFactor;
-        if (state == State.Turning || (state == State.Cruise && (curbDist < 0f || aheadDist > 0f)))
+        if (state == State.Turning || (state == State.Cruise && curbDist < 0f) || aheadDist > 0f)
             desired = Mathf.Min(desired, sys.turnSpeed * desiredSpeedFactor);
 
         // Free-road acceleration (IDM).
