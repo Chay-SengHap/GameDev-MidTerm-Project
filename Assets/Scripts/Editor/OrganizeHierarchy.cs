@@ -46,6 +46,8 @@ public static class OrganizeHierarchy
         int moved = 0;
         foreach (var piece in pieces)
         {
+            if (piece.transform.parent != null && !HierarchyGroup.IsGroup(piece.transform.parent))
+                continue;
             string[] path = FolderPath(piece);
             Transform folder = GetFolder(scene, path);
             if (piece.transform.parent != folder)

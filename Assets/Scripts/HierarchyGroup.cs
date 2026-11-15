@@ -28,19 +28,42 @@ public class HierarchyGroup : MonoBehaviour
         return result;
     }
 
-    /// The city piece an object belongs to: its topmost parent that is not a folder.
+    private static readonly string[] PiecePrefixes =
+    {
+        "Road", "Vehicle", "Building", "Props", "Natures", "SM_Boxes", "Citizen"
+    };
+
+    /// The city piece an object belongs to: its topmost parent that is not a folder or container.
     public static Transform PieceRoot(Transform t)
     {
         if (t == null) return null;
-        while (t.parent != null && !IsGroup(t.parent)) t = t.parent;
+        while (t.parent != null && !IsContainer(t.parent)) t = t.parent;
         return t;
     }
 
     public static bool IsGroup(Transform t) => t != null && t.GetComponent<HierarchyGroup>() != null;
 
+    /// True for HierarchyGroup folders and plain container GameObjects (e.g. prefab road rows) holding city pieces.
+    public static bool IsContainer(Transform t)
+    {
+        if (t == null) return false;
+        if (IsGroup(t)) return true;
+        if (IsPieceName(t.name) || t.GetComponents<Component>().Length != 1) return false;
+        foreach (Transform child in t)
+            if (IsPieceName(child.name)) return true;
+        return false;
+    }
+
+    private static bool IsPieceName(string name)
+    {
+        foreach (string prefix in PiecePrefixes)
+            if (name.StartsWith(prefix, System.StringComparison.OrdinalIgnoreCase)) return true;
+        return false;
+    }
+
     private static void Collect(Transform t, List<GameObject> result)
     {
-        if (IsGroup(t))
+        if (IsContainer(t))
         {
             foreach (Transform child in t) Collect(child, result);
         }

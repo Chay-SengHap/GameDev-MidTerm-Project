@@ -98,6 +98,10 @@ public class TrafficCar : MonoBehaviour
     private TrafficIntersection previousDestination;
     private TrafficIntersection unroutableJunction;
     private bool roadBlocked;
+    [Header("Debug (Read Only)")]
+    [SerializeField] private string stopReason;
+    private string sensedObstacleName;
+    private string hitObstacleName;
 
     // Visuals
     private Renderer[] brakeLights, leftIndicators, rightIndicators;
@@ -365,7 +369,7 @@ public class TrafficCar : MonoBehaviour
                 if (stalledTime > timeout)
                 {
                     stalledTime = timeout - 2f;
-                    if (!approachingCorner && state != State.Turning && sys.TryRejoinTraffic(this))
+                    if (sys.TryRejoinTraffic(this))
                     {
                         stalledTime = 0f;
                         return;
@@ -433,6 +437,16 @@ public class TrafficCar : MonoBehaviour
             smoothedCurbDist = previousSmoothedCurb;
             hardBlocker = blocker;
             hardBlockedTimer += dt;
+            if (state == State.Turning && blocker == null && hardBlockedTimer > 1.5f)
+            {
+                if (turnRemaining < 45f) heading = nextHeading;
+                state = State.Cruise;
+                turnRemaining = 0f;
+                hardBlockedTimer = 0f;
+                senseTimer = 0f;
+                if (CanMove(pos - Direction * 0.5f, CarRotation(), out _))
+                    backUpTimer = 0.6f;
+            }
 
         }
         else if (step > 0f)
@@ -458,6 +472,26 @@ public class TrafficCar : MonoBehaviour
 
         rb.MovePosition(pos);
         rb.MoveRotation(CarRotation());
+        UpdateStopReason();
+    }
+
+    private void UpdateStopReason()
+    {
+        if (speed >= 0.2f) { stopReason = $"Moving ({state}, {speed:F1} m/s)"; return; }
+        if (hardBlocker != null) { stopReason = $"HardOverlap: {hardBlocker.name}"; return; }
+        if (hardBlockedTimer > 0f)
+        {
+            Quaternion rot = CarRotation();
+            string reason = !OnRoad(pos + Direction * 0.1f, rot) ? "OffRoad" : $"HitsObstacle ({hitObstacleName})";
+            stopReason = $"CanMoveFailed ({state}, {reason})";
+            return;
+        }
+        if (sensedLeader != null) { stopReason = $"Leader: {sensedLeader.name}"; return; }
+        if (forwardObstructed) { stopReason = $"ForwardObstacle: {sensedObstacleName}"; return; }
+        if (roadBlocked) { stopReason = $"RoadBlocked (aheadDist={aheadDist:F1})"; return; }
+        if (junctionBlocker != null) { stopReason = $"JunctionBlocker: {junctionBlocker.name}"; return; }
+        if (waitingForSignal && stopLineDist < 5f) { stopReason = $"RedLight ({lightAhead?.name}, dist={stopLineDist:F1})"; return; }
+        stopReason = $"Stopped ({state}, lightDist={stopLineDist:F1})";
     }
 
     private void Update()
@@ -605,14 +639,20 @@ public class TrafficCar : MonoBehaviour
 
         // Prefer the outgoing lane centre. A nearby arc can still fit when the
         // ideal one clips the inside curb or the vehicle has a larger footprint.
-        for (float offset = 0f; offset <= 3f; offset += 0.5f)
+        float baseRadius = Mathf.Max(radius, sys.minTurnRadius);
+        for (float offset = 0f; offset <= 6f; offset += 0.5f)
         {
-            float wider = radius + offset;
-            float tighter = radius - offset;
-            if (wider >= sys.minTurnRadius && TryTurn(cornerTurnSign, wider)) return;
+            float wider = baseRadius + offset;
+            float tighter = baseRadius - offset;
+            if (TryTurn(cornerTurnSign, wider)) return;
             if (offset > 0f && tighter >= sys.minTurnRadius && TryTurn(cornerTurnSign, tighter)) return;
         }
-        roadBlocked = aheadDist > 0f && aheadDist <= halfLength + 0.5f;
+        if (aheadDist > 0f && aheadDist <= halfLength + 1.5f)
+        {
+            AtRoadEnd();
+            return;
+        }
+        roadBlocked = aheadDist > 0f && aheadDist <= sys.minTurnRadius + halfLength * 0.85f;
     }
 
     private void AtJunction()
@@ -674,9 +714,7 @@ public class TrafficCar : MonoBehaviour
         if (route.Count < 2) return false;
 
         var next = route[1];
-        Vector3 delta = next.Center - junction.Center;
-        Vector3 outgoing = Mathf.Abs(delta.x) > Mathf.Abs(delta.z)
-            ? Vector3.right * Mathf.Sign(delta.x) : Vector3.forward * Mathf.Sign(delta.z);
+        Vector3 outgoing = sys.GetOutgoingDirection(junction, next);
         if (plannedJunction != junction || plannedExit != outgoing)
         {
             plannedJunction = junction;
@@ -714,16 +752,18 @@ public class TrafficCar : MonoBehaviour
     {
         const float angle = 90f;
         if (MustStopAtLight() || JunctionBlockedAhead()) return false;
-        Vector3 forward = heading;
+        Vector3 forward = Direction;
         Quaternion startRotation = Quaternion.Euler(0f,
-            HeadingYaw(heading) + (sys.modelFacesPositiveZ ? 0f : 180f), 0f);
+            yaw + (sys.modelFacesPositiveZ ? 0f : 180f), 0f);
         Vector3 right = Right(forward);
-        for (float degrees = 10f; degrees <= angle; degrees += 10f)
+        float yawOffset = Mathf.DeltaAngle(HeadingYaw(heading), yaw);
+        float turnAngle = Mathf.Clamp(angle - sign * yawOffset, 30f, 120f);
+        for (float degrees = 2.5f; degrees <= turnAngle; degrees += 2.5f)
         {
             float radians = degrees * Mathf.Deg2Rad;
             Vector3 point = pos + radius * (forward * Mathf.Sin(radians) + right * sign * (1f - Mathf.Cos(radians)));
             Quaternion rotation = Quaternion.AngleAxis(sign * degrees, Vector3.up) * startRotation;
-            if (!OnRoad(point, rotation) || HitsObstacle(point, rotation, staticOnly: true)) return false;
+            if (!OnRoad(point, rotation) || HitsObstacle(point, rotation)) return false;
         }
         StartTurn(sign, angle, radius, 0f);
         return true;
@@ -731,9 +771,9 @@ public class TrafficCar : MonoBehaviour
 
     private void StartTurn(float sign, float angle, float radius, float delay)
     {
-        yaw = HeadingYaw(heading);
+        float yawOffset = Mathf.DeltaAngle(HeadingYaw(heading), yaw);
         turnSign = sign;
-        turnRemaining = angle;
+        turnRemaining = Mathf.Clamp(angle - sign * yawOffset, 30f, 120f);
         currentTurnRadius = Mathf.Max(radius, 1f);
         turnDelay = delay;
         nextHeading = Quaternion.Euler(0f, sign * angle, 0f) * heading;
@@ -786,9 +826,12 @@ public class TrafficCar : MonoBehaviour
 
     private void UpdateSpeed(float dt)
     {
-        // Desired speed: slower through corners and junctions.
+        // Desired speed: slower through corners and junctions, and slow down before planned junction turns.
         float desired = sys.cruiseSpeed * desiredSpeedFactor;
-        if (state == State.Turning || approachingCorner || aheadDist > 0f || (state == State.Cruise && curbDist < 0f))
+        bool approachingPlannedTurn = lightAhead != null && plannedJunction == lightAhead &&
+            stopLineDist < 18f && Mathf.Abs(Vector3.Dot(plannedExit, Right(heading))) > 0.5f;
+        if (state == State.Turning || approachingCorner || approachingPlannedTurn ||
+            aheadDist > 0f || (state == State.Cruise && curbDist < 0f))
             desired = Mathf.Min(desired, sys.turnSpeed * desiredSpeedFactor);
 
         // Free-road acceleration (IDM).
@@ -876,7 +919,7 @@ public class TrafficCar : MonoBehaviour
         for (int i = 0; i < n; i++)
         {
             var h = obstacleHits[i];
-            if (h.collider.transform.IsChildOf(transform)) continue;   // ourselves
+            if (h.collider.transform.IsChildOf(transform) || IsSidewalkOverhangOrCafeProp(h.collider)) continue;   // ourselves / sidewalk café props
             float d = h.distance;
             if (d <= 0f)
             {
@@ -887,7 +930,8 @@ public class TrafficCar : MonoBehaviour
             }
             if (d < nearest) { nearest = d; nearestCol = h.collider; }
         }
-        if (nearestCol == null) return -1f;
+        if (nearestCol == null) { sensedObstacleName = null; return -1f; }
+        sensedObstacleName = nearestCol.name;
 
         var body = nearestCol.attachedRigidbody;
         if (body != null)
@@ -919,8 +963,17 @@ public class TrafficCar : MonoBehaviour
         Footprint(point, rotation, out Vector3 center, out Vector3 forward, out Vector3 right);
         Vector3 length = forward * (halfLength * 0.85f);
         Vector3 width = right * (halfWidth * 0.9f);
-        return sys.IsRoad(center + length + width) && sys.IsRoad(center + length - width) &&
-            sys.IsRoad(center - length + width) && sys.IsRoad(center - length - width);
+        return IsRoadOrSeam(center + length + width, forward) &&
+            IsRoadOrSeam(center + length - width, forward) &&
+            IsRoadOrSeam(center - length + width, forward) &&
+            IsRoadOrSeam(center - length - width, forward);
+    }
+
+    /// Bridges tiny seams between adjacent road tiles without allowing corners onto curbs or dead ends.
+    private bool IsRoadOrSeam(Vector3 point, Vector3 forward)
+    {
+        return sys.IsRoad(point) ||
+            (sys.IsRoad(point + forward * 0.2f) && sys.IsRoad(point - forward * 0.2f));
     }
 
     private bool HitsObstacle(Vector3 point, Quaternion rotation, bool staticOnly = false)
@@ -935,13 +988,24 @@ public class TrafficCar : MonoBehaviour
         for (int i = 0; i < count; i++)
         {
             Collider hit = footprintHits[i];
-            if (hit.attachedRigidbody == rb || hit.transform.IsChildOf(transform)) continue;
+            if (hit.attachedRigidbody == rb || hit.transform.IsChildOf(transform) || IsSidewalkOverhangOrCafeProp(hit)) continue;
             if (staticOnly && hit.attachedRigidbody != null) continue;
             // Traffic cars are checked against their reserved poses before the physics step.
             if (hit.attachedRigidbody != null && hit.attachedRigidbody.TryGetComponent<TrafficCar>(out _)) continue;
+            hitObstacleName = hit.name;
             return true;
         }
         return count == footprintHits.Length;
+    }
+
+    private static bool IsSidewalkOverhangOrCafeProp(Collider col)
+    {
+        if (col.attachedRigidbody == null && col.bounds.min.y > 1.1f) return true;
+        Transform root = HierarchyGroup.PieceRoot(col.transform);
+        string n = root != null ? root.name : col.name;
+        return n.StartsWith("Props_Coffee", System.StringComparison.OrdinalIgnoreCase) ||
+               n.StartsWith("Props_Umbrella", System.StringComparison.OrdinalIgnoreCase) ||
+               n.Contains("[Sitting");
     }
 
     /// Would this car's outline (seen from above, plus a small margin) overlap another car if it moved to nextPos?
@@ -1083,8 +1147,14 @@ public class TrafficCar : MonoBehaviour
         Vector3 exit = plannedJunction == lightAhead ? plannedExit : heading;
         Vector3 exitRight = Right(exit);
         float exitSide = exit == heading ? Vector3.Dot(pos - center, exitRight) : plannedExitSide;
-        float exitLength = halfLength * 2f + minGap;
-        Vector3 exitCenter = center + exit * (half + exitLength * 0.5f) + exitRight * exitSide;
+        float neededSpace = halfLength * 2f + 1.5f;
+        Vector3 exitCenter = center + exit * (half + neededSpace * 0.5f) + exitRight * exitSide;
+
+        // Measure short blocks (e.g. 20 m single-tile streets) so a 3rd car won't enter if it can't fit.
+        TrafficIntersection nextJunction = sys.IntersectionAhead(center + exit * half, exit, 45f, out float blockLength, lightAhead);
+        float usedBlockSpace = 0f;
+        TrafficCar blockTail = null;
+
         foreach (var other in AllCars)
         {
             if (other == this || other.rb == null || !other.isActiveAndEnabled ||
@@ -1099,7 +1169,10 @@ public class TrafficCar : MonoBehaviour
             // Check its bumper against that line, using the same tolerance as the light.
             bool onApproach = !parked && (other.state != State.Turning || other.turnDelay > 0f) &&
                 -Vector3.Dot(relative, other.heading) - other.halfLength >= half - 0.5f;
-            if (!onApproach && Overlaps(center, Vector3.forward, Vector3.right, half - 0.75f, half - 0.75f,
+            bool movingSameAxis = !parked && other.Speed > 1.5f &&
+                Mathf.Abs(Vector3.Dot(heading, other.heading)) > 0.7f;
+            if (!onApproach && !movingSameAxis &&
+                Overlaps(center, Vector3.forward, Vector3.right, half - 0.75f, half - 0.75f,
                 carCenter, forward, right, other.halfLength, other.halfWidth))
             {
                 // Ignore the nose of an approaching car while its center is still outside.
@@ -1107,9 +1180,22 @@ public class TrafficCar : MonoBehaviour
                     Vector3.Dot(relative, forward) > 0f) return other;
             }
 
-            if (Overlaps(exitCenter, exit, exitRight, exitLength * 0.5f, halfWidth,
+            if ((parked || other.Speed < 1.5f) &&
+                Overlaps(exitCenter, exit, exitRight, neededSpace * 0.5f, halfWidth,
                 carCenter, forward, right, other.halfLength, other.halfWidth)) return other;
+
+            if (nextJunction != null && (parked || other.Speed < 1.5f))
+            {
+                float alongExit = Vector3.Dot(relative, exit) - half;
+                float lateralExit = Mathf.Abs(Vector3.Dot(relative, exitRight) - exitSide);
+                if (alongExit > 0f && alongExit < blockLength && lateralExit < halfWidth + other.halfWidth)
+                {
+                    usedBlockSpace += other.halfLength * 2f + minGap;
+                    blockTail = other;
+                }
+            }
         }
+        if (nextJunction != null && usedBlockSpace + neededSpace > blockLength) return blockTail;
         return null;
     }
 

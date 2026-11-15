@@ -60,7 +60,7 @@ public class TrafficSystem : MonoBehaviour
 
     [Header("Road detection")]
     [SerializeField] private string roadPrefix = "Road";
-    [SerializeField] private string[] notDriveable = { "Sidewalk", "Concrete" };
+    [SerializeField] private string[] notDriveable = { "Sidewalk", "Concrete", "Tile Small" };
     [SerializeField] private float maxRoadSurfaceHeight = 0.12f; // asphalt is at 0, curbs/sidewalks at ~0.2
 
     public static TrafficSystem Instance { get; private set; }
@@ -68,6 +68,8 @@ public class TrafficSystem : MonoBehaviour
     private readonly Dictionary<Collider, bool> roadColliderCache = new Dictionary<Collider, bool>();
     private readonly Dictionary<TrafficIntersection, List<TrafficIntersection>> roadLinks =
         new Dictionary<TrafficIntersection, List<TrafficIntersection>>();
+    private readonly Dictionary<(TrafficIntersection from, TrafficIntersection to), Vector3> roadExitDirections =
+        new Dictionary<(TrafficIntersection from, TrafficIntersection to), Vector3>();
     private readonly RaycastHit[] hits = new RaycastHit[16];
     private readonly List<Pose> trafficStarts = new List<Pose>();
     private readonly List<Vector3> roadCorners = new List<Vector3>();
@@ -187,8 +189,8 @@ public class TrafficSystem : MonoBehaviour
 
             Vector3 center = new Vector3(corner.x, position.y, corner.z);
             // A 20 m corner tile connects the approach to one perpendicular street.
-            // Sample beyond the tile so the asphalt inside the bend cannot masquerade as an exit.
-            if (IsRoad(center + heading * 14f) || !IsRoad(center - heading * 14f)) continue;
+            // Sample beyond the tile so the asphalt inside the bend or a short turnout cannot masquerade as an exit.
+            if ((IsRoad(center + heading * 14f) && IsRoad(center + heading * 22f)) || !IsRoad(center - heading * 14f)) continue;
             // A short paved turnout beside the corner is not a connecting street.
             bool rightExit = IsRoad(center + right * 14f) && IsRoad(center + right * 22f);
             bool leftExit = IsRoad(center - right * 14f) && IsRoad(center - right * 22f);
@@ -279,6 +281,8 @@ public class TrafficSystem : MonoBehaviour
 
     private void BuildRoadLinks()
     {
+        roadLinks.Clear();
+        roadExitDirections.Clear();
         foreach (var from in Intersections)
         {
             var neighbors = new List<TrafficIntersection>();
@@ -287,29 +291,92 @@ public class TrafficSystem : MonoBehaviour
             {
                 Vector3 direction = Quaternion.Euler(0f, 90f * i, 0f) * Vector3.forward;
                 Vector3 right = Vector3.Cross(Vector3.up, direction);
-                TrafficIntersection nearest = null;
-                float distance = float.PositiveInfinity;
-                foreach (var to in Intersections)
-                {
-                    Vector3 delta = to.Center - from.Center;
-                    float along = Vector3.Dot(delta, direction);
-                    if (along <= 1f || along >= distance || Mathf.Abs(Vector3.Dot(delta, right)) > 1f) continue;
-                    nearest = to;
-                    distance = along;
-                }
+                TrafficIntersection nearest = FindNearestIntersectionAlong(from.Center, direction, right, out float distance);
+                float cornerDist = FindNearestCornerAlong(from.Center, direction, right, out Vector3 corner);
 
-                if (nearest == null) continue;
-                Vector3 start = new Vector3(from.Center.x, 0f, from.Center.z);
-                bool connected = true;
-                for (float d = 2f; d < distance; d += 2f)
+                if (nearest != null && distance < cornerDist)
                 {
-                    if (IsRoad(start + direction * d + right * 2f)) continue;
-                    connected = false;
-                    break;
+                    if (IsRoadSegmentConnected(from.Center, direction, right, distance))
+                    {
+                        neighbors.Add(nearest);
+                        roadExitDirections[(from, nearest)] = direction;
+                    }
                 }
-                if (connected) neighbors.Add(nearest);
+                else if (cornerDist < float.PositiveInfinity && IsRoadSegmentConnected(from.Center, direction, right, cornerDist))
+                {
+                    Vector3 center = new Vector3(corner.x, 0f, corner.z);
+                    bool rightExit = IsRoad(center + right * 14f) && IsRoad(center + right * 22f);
+                    bool leftExit = IsRoad(center - right * 14f) && IsRoad(center - right * 22f);
+                    if (rightExit == leftExit) continue;
+
+                    Vector3 turnDir = rightExit ? right : -right;
+                    Vector3 turnRight = Vector3.Cross(Vector3.up, turnDir);
+                    TrafficIntersection cornerTarget = FindNearestIntersectionAlong(center, turnDir, turnRight, out float turnDist);
+                    if (cornerTarget != null && cornerTarget != from &&
+                        IsRoadSegmentConnected(center, turnDir, turnRight, turnDist) &&
+                        !neighbors.Contains(cornerTarget))
+                    {
+                        neighbors.Add(cornerTarget);
+                        roadExitDirections[(from, cornerTarget)] = direction;
+                    }
+                }
             }
         }
+    }
+
+    private static bool IsAheadOnAxis(Vector3 origin, Vector3 candidate, Vector3 direction, Vector3 right,
+        float bestDistance, out float along)
+    {
+        Vector3 delta = candidate - origin;
+        along = Vector3.Dot(delta, direction);
+        return along > 1f && along < bestDistance && Mathf.Abs(Vector3.Dot(delta, right)) <= 1f;
+    }
+
+    private TrafficIntersection FindNearestIntersectionAlong(Vector3 origin, Vector3 direction, Vector3 right, out float distance)
+    {
+        TrafficIntersection nearest = null;
+        distance = float.PositiveInfinity;
+        foreach (var to in Intersections)
+        {
+            if (!IsAheadOnAxis(origin, to.Center, direction, right, distance, out float along)) continue;
+            nearest = to;
+            distance = along;
+        }
+        return nearest;
+    }
+
+    private float FindNearestCornerAlong(Vector3 origin, Vector3 direction, Vector3 right, out Vector3 nearestCorner)
+    {
+        nearestCorner = Vector3.zero;
+        float distance = float.PositiveInfinity;
+        foreach (Vector3 corner in roadCorners)
+        {
+            if (!IsAheadOnAxis(origin, corner, direction, right, distance, out float along)) continue;
+            nearestCorner = corner;
+            distance = along;
+        }
+        return distance;
+    }
+
+    private bool IsRoadSegmentConnected(Vector3 origin, Vector3 direction, Vector3 right, float distance)
+    {
+        Vector3 start = new Vector3(origin.x, 0f, origin.z);
+        for (float d = 2f; d < distance; d += 2f)
+        {
+            Vector3 p = start + direction * d + right * 2f;
+            if (!IsRoad(p) && !(IsRoad(p + direction * 0.25f) && IsRoad(p - direction * 0.25f)))
+                return false;
+        }
+        return true;
+    }
+
+    /// Returns the cardinal departure direction from <paramref name="from"/> toward <paramref name="to"/>.
+    internal Vector3 GetOutgoingDirection(TrafficIntersection from, TrafficIntersection to)
+    {
+        if (roadExitDirections.TryGetValue((from, to), out Vector3 dir)) return dir;
+        Vector3 delta = to.Center - from.Center;
+        return Mathf.Abs(delta.x) > Mathf.Abs(delta.z)
+            ? Vector3.right * Mathf.Sign(delta.x) : Vector3.forward * Mathf.Sign(delta.z);
     }
 
     public TrafficIntersection PlanRoute(TrafficIntersection start, Vector3 heading,
@@ -330,7 +397,7 @@ public class TrafficSystem : MonoBehaviour
             {
                 if (parents.ContainsKey(next)) continue;
                 if (current == start && next == blockedExit) continue;
-                if (current == start && Vector3.Dot((next.Center - start.Center).normalized, heading) < -0.5f)
+                if (current == start && Vector3.Dot(GetOutgoingDirection(start, next), heading) < -0.5f)
                     continue;
                 parents.Add(next, current);
                 frontier.Enqueue(next);
