@@ -9171,6 +9171,25 @@ PrefabInstance:
       insertIndex: -1
       addedObject: {fileID: 7000000000582745239}
   m_SourcePrefab: {fileID: 100100000, guid: 288b117258616aa4f928ba6f91dc47c3, type: 3}
+--- !u!1 &7000000000582745238 stripped
+GameObject:
+  m_CorrespondingSourceObject: {fileID: 100000, guid: 288b117258616aa4f928ba6f91dc47c3, type: 3}
+  m_PrefabInstance: {fileID: 291372619}
+  m_PrefabAsset: {fileID: 0}
+--- !u!114 &7000000000582745239
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 7000000000582745238}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 7ce74423139265c47a510f772168d097, type: 3}
+  m_Name:
+  m_EditorClassIdentifier: Assembly-CSharp::TrafficVehicleSettings
+  behaviour: 1
+  speedMultiplier: 1
 --- !u!4 &293584212 stripped
 Transform:
   m_CorrespondingSourceObject: {fileID: 8430503945632467964, guid: 2567290d5cb1c6d4aa4af94c3342c097, type: 3}
@@ -11419,6 +11438,25 @@ PrefabInstance:
       insertIndex: -1
       addedObject: {fileID: 7000000000721644963}
   m_SourcePrefab: {fileID: 100100000, guid: 05aec82adc02f16409639716322b1673, type: 3}
+--- !u!1 &7000000000721644962 stripped
+GameObject:
+  m_CorrespondingSourceObject: {fileID: 100000, guid: 05aec82adc02f16409639716322b1673, type: 3}
+  m_PrefabInstance: {fileID: 360822481}
+  m_PrefabAsset: {fileID: 0}
+--- !u!114 &7000000000721644963
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 7000000000721644962}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 7ce74423139265c47a510f772168d097, type: 3}
+  m_Name:
+  m_EditorClassIdentifier: Assembly-CSharp::TrafficVehicleSettings
+  behaviour: 1
+  speedMultiplier: 1
 --- !u!1001 &363009366
 PrefabInstance:
   m_ObjectHideFlags: 0
@@ -23698,6 +23736,25 @@ PrefabInstance:
       insertIndex: -1
       addedObject: {fileID: 7000000001449704993}
   m_SourcePrefab: {fileID: 100100000, guid: 05aec82adc02f16409639716322b1673, type: 3}
+--- !u!1 &7000000001449704992 stripped
+GameObject:
+  m_CorrespondingSourceObject: {fileID: 100000, guid: 05aec82adc02f16409639716322b1673, type: 3}
+  m_PrefabInstance: {fileID: 724852496}
+  m_PrefabAsset: {fileID: 0}
+--- !u!114 &7000000001449704993
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 7000000001449704992}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 7ce74423139265c47a510f772168d097, type: 3}
+  m_Name:
+  m_EditorClassIdentifier: Assembly-CSharp::TrafficVehicleSettings
+  behaviour: 1
+  speedMultiplier: 1
 --- !u!1 &729336597 stripped
 GameObject:
   m_CorrespondingSourceObject: {fileID: 6463178797277354336, guid: fc2efff696743074ebe14a5214e205d8, type: 3}
@@ -41041,6 +41098,25 @@ PrefabInstance:
       insertIndex: -1
       addedObject: {fileID: 7000000002601065035}
   m_SourcePrefab: {fileID: 100100000, guid: 93d0d450ec8b42e46b724bf2bbee330b, type: 3}
+--- !u!1 &7000000002601065034 stripped
+GameObject:
+  m_CorrespondingSourceObject: {fileID: 100000, guid: 93d0d450ec8b42e46b724bf2bbee330b, type: 3}
+  m_PrefabInstance: {fileID: 1300532517}
+  m_PrefabAsset: {fileID: 0}
+--- !u!114 &7000000002601065035
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 7000000002601065034}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 7ce74423139265c47a510f772168d097, type: 3}
+  m_Name:
+  m_EditorClassIdentifier: Assembly-CSharp::TrafficVehicleSettings
+  behaviour: 1
+  speedMultiplier: 1
 --- !u!1001 &1302294564
 PrefabInstance:
   m_ObjectHideFlags: 0
@@ -67176,82 +67252,6 @@ PrefabInstance:
       addedObject: {fileID: 1782987755}
     m_AddedComponents: []
   m_SourcePrefab: {fileID: 100100000, guid: 2567290d5cb1c6d4aa4af94c3342c097, type: 3}
---- !u!1 &7000000000582745238 stripped
-GameObject:
-  m_CorrespondingSourceObject: {fileID: 100000, guid: 288b117258616aa4f928ba6f91dc47c3, type: 3}
-  m_PrefabInstance: {fileID: 291372619}
-  m_PrefabAsset: {fileID: 0}
---- !u!114 &7000000000582745239
-MonoBehaviour:
-  m_ObjectHideFlags: 0
-  m_CorrespondingSourceObject: {fileID: 0}
-  m_PrefabInstance: {fileID: 0}
-  m_PrefabAsset: {fileID: 0}
-  m_GameObject: {fileID: 7000000000582745238}
-  m_Enabled: 1
-  m_EditorHideFlags: 0
-  m_Script: {fileID: 11500000, guid: 7ce74423139265c47a510f772168d097, type: 3}
-  m_Name:
-  m_EditorClassIdentifier: Assembly-CSharp::TrafficVehicleSettings
-  behaviour: 1
-  speedMultiplier: 1
---- !u!1 &7000000000721644962 stripped
-GameObject:
-  m_CorrespondingSourceObject: {fileID: 100000, guid: 05aec82adc02f16409639716322b1673, type: 3}
-  m_PrefabInstance: {fileID: 360822481}
-  m_PrefabAsset: {fileID: 0}
---- !u!114 &7000000000721644963
-MonoBehaviour:
-  m_ObjectHideFlags: 0
-  m_CorrespondingSourceObject: {fileID: 0}
-  m_PrefabInstance: {fileID: 0}
-  m_PrefabAsset: {fileID: 0}
-  m_GameObject: {fileID: 7000000000721644962}
-  m_Enabled: 1
-  m_EditorHideFlags: 0
-  m_Script: {fileID: 11500000, guid: 7ce74423139265c47a510f772168d097, type: 3}
-  m_Name:
-  m_EditorClassIdentifier: Assembly-CSharp::TrafficVehicleSettings
-  behaviour: 1
-  speedMultiplier: 1
---- !u!1 &7000000001449704992 stripped
-GameObject:
-  m_CorrespondingSourceObject: {fileID: 100000, guid: 05aec82adc02f16409639716322b1673, type: 3}
-  m_PrefabInstance: {fileID: 724852496}
-  m_PrefabAsset: {fileID: 0}
---- !u!114 &7000000001449704993
-MonoBehaviour:
-  m_ObjectHideFlags: 0
-  m_CorrespondingSourceObject: {fileID: 0}
-  m_PrefabInstance: {fileID: 0}
-  m_PrefabAsset: {fileID: 0}
-  m_GameObject: {fileID: 7000000001449704992}
-  m_Enabled: 1
-  m_EditorHideFlags: 0
-  m_Script: {fileID: 11500000, guid: 7ce74423139265c47a510f772168d097, type: 3}
-  m_Name:
-  m_EditorClassIdentifier: Assembly-CSharp::TrafficVehicleSettings
-  behaviour: 1
-  speedMultiplier: 1
---- !u!1 &7000000002601065034 stripped
-GameObject:
-  m_CorrespondingSourceObject: {fileID: 100000, guid: 93d0d450ec8b42e46b724bf2bbee330b, type: 3}
-  m_PrefabInstance: {fileID: 1300532517}
-  m_PrefabAsset: {fileID: 0}
---- !u!114 &7000000002601065035
-MonoBehaviour:
-  m_ObjectHideFlags: 0
-  m_CorrespondingSourceObject: {fileID: 0}
-  m_PrefabInstance: {fileID: 0}
-  m_PrefabAsset: {fileID: 0}
-  m_GameObject: {fileID: 7000000002601065034}
-  m_Enabled: 1
-  m_EditorHideFlags: 0
-  m_Script: {fileID: 11500000, guid: 7ce74423139265c47a510f772168d097, type: 3}
-  m_Name:
-  m_EditorClassIdentifier: Assembly-CSharp::TrafficVehicleSettings
-  behaviour: 1
-  speedMultiplier: 1
 --- !u!1001 &5312302759048358749
 PrefabInstance:
   m_ObjectHideFlags: 0
