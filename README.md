@@ -136,6 +136,3 @@ Third-party assets used in this project, all from the Unity Asset Store and used
 - Boxes by [PolyOne Studio](https://assetstore.unity.com/publishers/105194): parcel and box models
 - Delivery scooter and courier models: [add source and link]
 
-## License
-
-[Add your license here]
