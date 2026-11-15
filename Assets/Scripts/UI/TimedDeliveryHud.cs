@@ -5,6 +5,9 @@ public class TimedDeliveryHud : MonoBehaviour
 {
     private static readonly Color Blue = new Color(0.27f, 0.75f, 1f);
     private UnityEngine.UI.Text objective, clock, resultTitle, resultDetail;
+    private UnityEngine.UI.Text cashLabel, rewardLabel;
+    private RectTransform vehiclePanel;
+    private float rewardVisibleUntil;
     private RectTransform resultPanel, pointer;
     private float pointerAngle;
     private RectTransform canvasRoot;
@@ -34,6 +37,28 @@ public class TimedDeliveryHud : MonoBehaviour
         header.gameObject.AddComponent<UnityEngine.UI.Image>().color = new Color(0.04f, 0.09f, 0.14f, 0.9f);
         objective = Label(header, "Objective", Vector2.zero, new Vector2(470f, 50f), 24);
         clock = Label(root.transform, "Countdown", new Vector2(0f, -104f), new Vector2(150f, 50f), 38, new Vector2(0.5f, 1f));
+        var cashPanel = Rect(root.transform, "Cash panel", new Vector2(0f, 1f),
+            new Vector2(24f, -316f), new Vector2(280f, 58f));
+        cashPanel.pivot = new Vector2(0f, 1f);
+        var cashBackground = cashPanel.gameObject.AddComponent<UnityEngine.UI.Image>();
+        cashBackground.color = new Color32(12, 23, 34, 244);
+        cashBackground.raycastTarget = false;
+        cashLabel = Label(cashPanel, "Cash balance", Vector2.zero, new Vector2(248f, 48f), 26);
+        cashLabel.alignment = TextAnchor.MiddleLeft;
+        cashLabel.color = new Color32(118, 235, 165, 255);
+        cashLabel.resizeTextForBestFit = true;
+        cashLabel.resizeTextMinSize = 18;
+        cashLabel.resizeTextMaxSize = 26;
+        var garageRect = Rect(root.transform, "Vehicles button", new Vector2(1f, 1f), new Vector2(-24f, -78f), new Vector2(180f, 46f));
+        var garageImage = garageRect.gameObject.AddComponent<UnityEngine.UI.Image>();
+        garageImage.color = new Color(0.09f, 0.38f, 0.63f);
+        var garageButton = garageRect.gameObject.AddComponent<UnityEngine.UI.Button>();
+        garageButton.targetGraphic = garageImage;
+        garageButton.onClick.AddListener(ToggleVehiclePanel);
+        Label(garageRect, "Vehicles label", Vector2.zero, garageRect.sizeDelta, 22).text = "Vehicles";
+        BuildVehiclePanel(root.transform);
+        rewardLabel = Label(root.transform, "Delivery reward", new Vector2(0f, -245f), new Vector2(520f, 72f), 30, new Vector2(0.5f, 1f));
+        rewardLabel.gameObject.SetActive(false);
         pointer = Rect(root.transform, "Delivery pointer", new Vector2(0.5f, 1f),
             new Vector2(0f, -174f), new Vector2(78f, 78f));
         var graphic = pointer.gameObject.AddComponent<DeliveryPointerGraphic>();
@@ -86,6 +111,42 @@ public class TimedDeliveryHud : MonoBehaviour
     }
 
     internal void ShowObjective(string text) => objective.text = text;
+
+    internal void SetCashBalance(int balance) => cashLabel.text = "Cash  $" + balance.ToString("N0");
+
+    private void BuildVehiclePanel(Transform parent)
+    {
+        vehiclePanel = Rect(parent, "Vehicle selection", new Vector2(0.5f, 0.5f), Vector2.zero, new Vector2(520f, 300f));
+        vehiclePanel.gameObject.AddComponent<UnityEngine.UI.Image>().color = new Color(0.04f, 0.09f, 0.14f, 0.97f);
+        Label(vehiclePanel, "Garage title", new Vector2(0f, 102f), new Vector2(480f, 46f), 30).text = "Choose a vehicle";
+        Label(vehiclePanel, "Scooter option", new Vector2(0f, 38f), new Vector2(460f, 48f), 25).text = "Scooter   Available";
+        Label(vehiclePanel, "Car option", new Vector2(0f, -22f), new Vector2(460f, 48f), 25).text = "Car   Coming Soon";
+        var closeRect = Rect(vehiclePanel, "Close garage", new Vector2(0.5f, 0.5f), new Vector2(0f, -105f), new Vector2(150f, 48f));
+        var closeImage = closeRect.gameObject.AddComponent<UnityEngine.UI.Image>();
+        closeImage.color = new Color(0.09f, 0.38f, 0.63f);
+        var closeButton = closeRect.gameObject.AddComponent<UnityEngine.UI.Button>();
+        closeButton.targetGraphic = closeImage;
+        closeButton.onClick.AddListener(ToggleVehiclePanel);
+        Label(closeRect, "Close label", Vector2.zero, closeRect.sizeDelta, 22).text = "Close";
+        vehiclePanel.gameObject.SetActive(false);
+    }
+
+    private void ToggleVehiclePanel() => vehiclePanel.gameObject.SetActive(!vehiclePanel.gameObject.activeSelf);
+
+    internal void ShowDeliveryReward(int stars, int reward, float remaining, int balance)
+    {
+        SetCashBalance(balance);
+        rewardLabel.text = "Delivery complete   " + new string('★', stars) + new string('☆', 5 - stars) +
+                           "   +$" + reward + "   " + Mathf.CeilToInt(remaining) + "s left";
+        rewardVisibleUntil = Time.unscaledTime + 5f;
+        rewardLabel.gameObject.SetActive(true);
+    }
+
+    private void Update()
+    {
+        if (rewardLabel != null && rewardLabel.gameObject.activeSelf && Time.unscaledTime >= rewardVisibleUntil)
+            rewardLabel.gameObject.SetActive(false);
+    }
 
     internal void ShowTime(float remaining)
     {

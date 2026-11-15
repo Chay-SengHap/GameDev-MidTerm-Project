@@ -30,6 +30,11 @@ public class TimedDelivery : MonoBehaviour
     [SerializeField] private DeliveryStop[] additionalStops = System.Array.Empty<DeliveryStop>();
     [SerializeField] private Vector3 pickupRoadApproach;
     [SerializeField] private Bounds pedestrianArea;
+    [Header("Delivery rewards")]
+    [SerializeField] private int[] rewardThresholdsSeconds = { 30, 20, 10, 5 };
+    [SerializeField] private int[] rewardAmounts = { 500, 400, 300, 200, 100 };
+    private const string CashBalanceKey = "DeliveryRush.CashBalance";
+    private int cashBalance;
 
     private MissionState state;
     private CountdownTimer timer;
@@ -68,6 +73,7 @@ public class TimedDelivery : MonoBehaviour
         }
 
         timer = GetComponent<CountdownTimer>();
+        cashBalance = PlayerPrefs.GetInt(CashBalanceKey, 0);
         timer.Pause();
         timer.Expired += Fail;
         packages.PackagePickedUp += SelectDestination;
@@ -83,6 +89,7 @@ public class TimedDelivery : MonoBehaviour
         }
         hud = gameObject.AddComponent<TimedDeliveryHud>();
         hud.Build(Retry);
+        hud.SetCashBalance(cashBalance);
         hud.BuildMinimap(gameObject.scene);
         CreateDestinationMarker();
         ShowObjective("Pick up the parcel");
@@ -269,6 +276,15 @@ public class TimedDelivery : MonoBehaviour
         customer.Face(scooter.Rider.position);
         if (!packages.GiveToCustomer(customer.ParcelHold)) return false;
         customer.ReceiveParcel();
+        int stars = 1;
+        for (int i = 0; i < rewardThresholdsSeconds.Length && i < 4; i++)
+            if (timer.Remaining >= rewardThresholdsSeconds[i]) { stars = 5 - i; break; }
+        int rewardIndex = 5 - stars;
+        int reward = rewardAmounts.Length > rewardIndex ? rewardAmounts[rewardIndex] : 0;
+        cashBalance += reward;
+        PlayerPrefs.SetInt(CashBalanceKey, cashBalance);
+        PlayerPrefs.Save();
+        hud.ShowDeliveryReward(stars, reward, timer.Remaining, cashBalance);
         Destroy(customer.gameObject, 8f);
         customer = null;
         packages.RestockPickup();

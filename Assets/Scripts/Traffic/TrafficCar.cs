@@ -81,6 +81,9 @@ public class TrafficCar : MonoBehaviour
     private TrafficCar sensedLeader, junctionBlocker;
     private bool forwardObstructed;
     private bool waitingForSignal, exitBlocked;
+    private bool approachingCorner;
+    private Vector3 cornerExitLane;
+    private float cornerTurnSign;
     private Vector3 lastProgressPosition;
 
     // Anti-gridlock (see TrafficSystem "Anti-gridlock")
@@ -362,7 +365,7 @@ public class TrafficCar : MonoBehaviour
                 if (stalledTime > timeout)
                 {
                     stalledTime = timeout - 2f;
-                    if (sys.TryRejoinTraffic(this))
+                    if (!approachingCorner && state != State.Turning && sys.TryRejoinTraffic(this))
                     {
                         stalledTime = 0f;
                         return;
@@ -513,9 +516,12 @@ public class TrafficCar : MonoBehaviour
         aheadDist = ScanEdge(pos + heading * halfLength, heading, sys.lookAhead);
         if (aheadDist > 0f) aheadDist += halfLength;
 
+        approachingCorner = state != State.Turning &&
+            sys.TryGetCornerExit(pos, heading, out cornerExitLane, out cornerTurnSign);
+
         // Next traffic light on our road.
         lightAhead = null;
-        if (state != State.Turning || turnDelay > 0f)
+        if (!approachingCorner && (state != State.Turning || turnDelay > 0f))
         {
             var ti = sys.IntersectionAhead(pos, heading, 70f, out float d,
                 state == State.Crossing ? lastJunction : null);
@@ -546,6 +552,11 @@ public class TrafficCar : MonoBehaviour
     private void Decide()
     {
         roadBlocked = false;
+        if (approachingCorner)
+        {
+            FollowRoadCorner();
+            return;
+        }
         if (state == State.Cruise && TryFollowRoute()) return;
         if ((MustStopAtLight() || JunctionBlockedAhead()) && stopLineDist < 6f) return;
 
@@ -562,6 +573,27 @@ public class TrafficCar : MonoBehaviour
                 else if (aheadDist > 0f && aheadDist < halfLength + 4f) AtRoadEnd();
                 break;
         }
+    }
+
+    private void FollowRoadCorner()
+    {
+        Vector3 exitDirection = Right(heading) * cornerTurnSign;
+        Vector3 exitRight = Right(exitDirection);
+        float curb = ScanEdge(cornerExitLane, exitRight, sys.maxCurbScan);
+        Vector3 target = cornerExitLane + exitRight * (curb > 0f ? curb - sys.laneOffsetFromCurb : 0f);
+        float radius = Vector3.Dot(target - pos, heading);
+        if (radius > sys.lookAhead + halfLength) return;
+
+        // Prefer the outgoing lane centre. A nearby arc can still fit when the
+        // ideal one clips the inside curb or the vehicle has a larger footprint.
+        for (float offset = 0f; offset <= 3f; offset += 0.5f)
+        {
+            float wider = radius + offset;
+            float tighter = radius - offset;
+            if (wider >= sys.minTurnRadius && TryTurn(cornerTurnSign, wider)) return;
+            if (offset > 0f && tighter >= sys.minTurnRadius && TryTurn(cornerTurnSign, tighter)) return;
+        }
+        roadBlocked = aheadDist > 0f && aheadDist <= halfLength + 0.5f;
     }
 
     private void AtJunction()
@@ -737,7 +769,7 @@ public class TrafficCar : MonoBehaviour
     {
         // Desired speed: slower through corners and junctions.
         float desired = sys.cruiseSpeed * desiredSpeedFactor;
-        if (state == State.Turning || aheadDist > 0f || (state == State.Cruise && curbDist < 0f))
+        if (state == State.Turning || approachingCorner || aheadDist > 0f || (state == State.Cruise && curbDist < 0f))
             desired = Mathf.Min(desired, sys.turnSpeed * desiredSpeedFactor);
 
         // Free-road acceleration (IDM).

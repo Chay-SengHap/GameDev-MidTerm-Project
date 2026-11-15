@@ -29,7 +29,7 @@ public class TrafficSystem : MonoBehaviour
     public float acceleration = 3f;
     public float braking = 9f;
     public float laneOffsetFromCurb = 3.2f; // distance from the right curb to the car's centre
-    public float turnRadius = 7f;           // left turns / U-turns
+    public float turnRadius = 7f;           // left turns
     public float minTurnRadius = 4f;        // right turns hug the corner
 
     [Header("Sensing")]
@@ -70,6 +70,7 @@ public class TrafficSystem : MonoBehaviour
         new Dictionary<TrafficIntersection, List<TrafficIntersection>>();
     private readonly RaycastHit[] hits = new RaycastHit[16];
     private readonly List<Pose> trafficStarts = new List<Pose>();
+    private readonly List<Vector3> roadCorners = new List<Vector3>();
 
     [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.BeforeSceneLoad)]
     private static void RegisterSceneBootstrap()
@@ -107,6 +108,9 @@ public class TrafficSystem : MonoBehaviour
         var roots = HierarchyGroup.AllPieces();
 
         SetupTrafficLights(roots);
+        foreach (GameObject root in roots)
+            if (root.activeInHierarchy && root.name.StartsWith("Road Corner"))
+                roadCorners.Add(root.transform.position);
         Physics.SyncTransforms();
         BuildRoadLinks();
 
@@ -169,6 +173,33 @@ public class TrafficSystem : MonoBehaviour
             }
             if (car.TryRejoinAt(start, minimumCarSpacing)) return true;
         }
+        return false;
+    }
+
+    internal bool TryGetCornerExit(Vector3 position, Vector3 heading, out Vector3 exitLane, out float turnSign)
+    {
+        Vector3 right = Vector3.Cross(Vector3.up, heading);
+        foreach (Vector3 corner in roadCorners)
+        {
+            Vector3 delta = corner - position;
+            float distance = Vector3.Dot(delta, heading);
+            if (distance < -8f || distance > 24f || Mathf.Abs(Vector3.Dot(delta, right)) > 9f) continue;
+
+            Vector3 center = new Vector3(corner.x, position.y, corner.z);
+            // A 20 m corner tile connects the approach to one perpendicular street.
+            // Sample beyond the tile so the asphalt inside the bend cannot masquerade as an exit.
+            if (IsRoad(center + heading * 14f) || !IsRoad(center - heading * 14f)) continue;
+            // A short paved turnout beside the corner is not a connecting street.
+            bool rightExit = IsRoad(center + right * 14f) && IsRoad(center + right * 22f);
+            bool leftExit = IsRoad(center - right * 14f) && IsRoad(center - right * 22f);
+            if (rightExit == leftExit) continue;
+
+            turnSign = rightExit ? 1f : -1f;
+            exitLane = center + right * (14f * turnSign);
+            return true;
+        }
+        exitLane = Vector3.zero;
+        turnSign = 0f;
         return false;
     }
 

@@ -23256,7 +23256,7 @@ MonoBehaviour:
   autoAddToVehicles: 1
   vehicleNamePrefix: Vehicle
   minimumCarSpacing: 16
-  maximumMovingCars: 24
+  maximumMovingCars: 34
   modelFacesPositiveZ: 1
   cruiseSpeed: 9
   turnSpeed: 4.5
