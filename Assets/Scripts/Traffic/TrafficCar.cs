@@ -77,6 +77,10 @@ public class TrafficCar : MonoBehaviour
     private TrafficCar hardBlocker;
     private bool initialized;
     private float stalledTime;
+    private float stuckTime, reverseCooldown;
+    private TrafficCar sensedLeader;
+    private bool forwardObstructed;
+    private bool waitingForSignal, exitBlocked;
     private Vector3 lastProgressPosition;
 
     // Anti-gridlock (see TrafficSystem "Anti-gridlock")
@@ -307,6 +311,7 @@ public class TrafficCar : MonoBehaviour
         state = State.Cruise;
         speed = accel = pitch = roll = 0f;
         hardBlockedTimer = backUpTimer = 0f;
+        stuckTime = reverseCooldown = 0f;
         hardBlocker = null;
         WaitingAtLight = QueuedBehindPlayer = roadBlocked = false;
         plannedJunction = lastJunction = unroutableJunction = goingThroughOnYellow = null;
@@ -336,14 +341,15 @@ public class TrafficCar : MonoBehaviour
     {
         if (state == State.Parked) return;
         float dt = Time.fixedDeltaTime;
+        reverseCooldown = Mathf.Max(0f, reverseCooldown - dt);
 
         senseTimer -= dt;
         if (senseTimer <= 0f)
         {
             senseTimer = sys.senseInterval;
             Sense();
-            Decide();
-            if ((pos - lastProgressPosition).sqrMagnitude >= 3f * 3f || QueuedBehindPlayer)
+            if (backUpTimer <= 0f) Decide();
+            if ((pos - lastProgressPosition).sqrMagnitude >= 14f * 14f || QueuedBehindPlayer || waitingForSignal)
             {
                 lastProgressPosition = pos;
                 stalledTime = 0f;
@@ -352,8 +358,7 @@ public class TrafficCar : MonoBehaviour
             {
                 stalledTime += sys.senseInterval;
                 // Allow a full signal cycle for queues, but recover sooner from a failed manoeuvre.
-                bool signalQueue = WaitingAtLight && !roadBlocked && hardBlockedTimer < sys.jamBackUpTime;
-                float timeout = signalQueue ? 2f * (sys.greenTime + sys.yellowTime + sys.allRedTime) + 8f : 9f;
+                const float timeout = 21f;
                 if (stalledTime > timeout)
                 {
                     stalledTime = timeout - 2f;
@@ -378,6 +383,12 @@ public class TrafficCar : MonoBehaviour
                 rb.MovePosition(pos);
             }
             else backUpTimer = 0f;
+            if (backUpTimer <= 0f)
+            {
+                route.Clear();
+                plannedJunction = unroutableJunction = null;
+                senseTimer = 0f;
+            }
             return;
         }
 
@@ -413,12 +424,6 @@ public class TrafficCar : MonoBehaviour
             hardBlocker = blocker;
             hardBlockedTimer += dt;
 
-            if (blocker != null && !WaitingAtLight && hardBlockedTimer > sys.jamBackUpTime &&
-                YieldsInBlockRing())
-            {
-                backUpTimer = 2f;
-                hardBlockedTimer = 0f;
-            }
         }
         else if (step > 0f)
         {
@@ -427,6 +432,7 @@ public class TrafficCar : MonoBehaviour
         }
 
         pos += dir * step;
+        TryClearJam(dt, step);
         sinceManeuver += step;
         stopLineDist -= step;
 
@@ -588,7 +594,9 @@ public class TrafficCar : MonoBehaviour
             TryTurn(1f, 90f, Mathf.Max(sys.minTurnRadius, lane))) return;
 
         float radius = Mathf.Max(sys.minTurnRadius * 0.8f, (roadWidth - 2f * lane) * 0.5f);
-        if (!TryTurn(-1f, 180f, radius) && aheadDist < halfLength + 3f)
+        // A mapped junction already has legal exits; an improvised U-turn here can send
+        // the car straight back into the same approach and repeat the loop.
+        if ((lightAhead != null || !TryTurn(-1f, 180f, radius)) && aheadDist < halfLength + 3f)
             roadBlocked = true;
     }
 
@@ -728,6 +736,8 @@ public class TrafficCar : MonoBehaviour
         blockedByPlayer = false;
         TrafficCar leaderCar = null;
         float gap = DistanceToObstacle(out float leaderSpeed, out bool isPlayer, out leaderCar);
+        sensedLeader = leaderCar;
+        forwardObstructed = gap >= 0f && gap < minGap + 0.5f && leaderSpeed < 0.35f;
         if (gap >= 0f)
         {
             a = Mathf.Min(a, FollowAccel(gap, leaderSpeed, desired));
@@ -741,6 +751,8 @@ public class TrafficCar : MonoBehaviour
         bool redLight = MustStopAtLight();
         // Don't enter a junction we can't get out of (it would lock the cross traffic).
         bool junctionHold = !redLight && JunctionBlockedAhead();
+        exitBlocked = junctionHold && stopLineDist < 5f;
+        waitingForSignal = speed < 1f && (redLight || (leaderCar != null && leaderCar.waitingForSignal));
         if (redLight || junctionHold)
             a = Mathf.Min(a, FollowAccel(Mathf.Max(stopLineDist, 0.01f), 0f, desired));
         WaitingAtLight = speed < 1f && (redLight || junctionHold || (leaderCar != null && leaderCar.WaitingAtLight));
@@ -929,17 +941,63 @@ public class TrafficCar : MonoBehaviour
 
     // ---------------------------------------------------------------- anti-gridlock
 
+    private void TryClearJam(float dt, float step)
+    {
+        if (step > 0.01f || waitingForSignal || QueuedBehindPlayer ||
+            (!exitBlocked && !roadBlocked && !forwardObstructed && hardBlockedTimer <= 0f))
+        {
+            stuckTime = 0f;
+            return;
+        }
+
+        stuckTime += dt;
+        if (stuckTime < sys.jamBackUpTime || reverseCooldown > 0f) return;
+        if (exitBlocked && state == State.Cruise && lightAhead != null && stopLineDist >= 0f &&
+            route.Count >= 2 && route[0] == lightAhead)
+        {
+            // Try another connected street before backing up. Keep the current plan if
+            // every alternate exit is unavailable.
+            var detour = new List<TrafficIntersection>();
+            var destination = sys.PlanRoute(lightAhead, heading, previousDestination, detour, route[1]);
+            if (destination != null)
+            {
+                route.Clear();
+                route.AddRange(detour);
+                previousDestination = destination;
+                plannedJunction = null;
+                reverseCooldown = 5f;
+                senseTimer = 0f;
+                return;
+            }
+        }
+        if (exitBlocked && !forwardObstructed && hardBlockedTimer <= 0f) return;
+        TrafficCar blocker = hardBlocker != null ? hardBlocker : sensedLeader;
+        if (blocker != null && blocker.state != State.Parked && !YieldsInBlockRing() &&
+            (Vector3.Dot(Direction, blocker.Direction) > -0.5f || GetInstanceID() < blocker.GetInstanceID()))
+            return;
+
+        reverseCooldown = 5f;
+        Quaternion rotation = CarRotation();
+        for (float distance = 0.25f; distance <= 1.5f; distance += 0.25f)
+            if (!CanMove(pos - Direction * distance, rotation, out _)) return;
+
+        speed = 0f;
+        backUpTimer = 1.25f;
+        stuckTime = hardBlockedTimer = 0f;
+        hardBlocker = null;
+    }
+
     /// Follows the chain "I'm blocked by A, A by B, ..." - true if it comes back to this car
     /// and this car has the highest instance ID in the ring (so exactly one car yields).
     private bool YieldsInBlockRing()
     {
         int id = GetInstanceID();
-        TrafficCar c = hardBlocker;
+        TrafficCar c = hardBlocker != null ? hardBlocker : sensedLeader;
         for (int i = 0; i < 8 && c != null; i++)
         {
             if (c == this) return true;
             if (c.speed > 0.2f || c.GetInstanceID() > id) return false;
-            c = c.hardBlocker;
+            c = c.hardBlocker != null ? c.hardBlocker : c.sensedLeader;
         }
         return false;
     }

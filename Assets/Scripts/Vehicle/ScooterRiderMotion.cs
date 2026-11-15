@@ -84,7 +84,7 @@ public class ScooterRiderMotion : MonoBehaviour
 
         // ---- Torso: inertia + tuck + corner lean ----
         float targetPitch = Mathf.Clamp(-scooter.LongitudinalAccel * accelerationLean, -maxAccelerationLean, maxAccelerationLean)
-                            + speedTuck * speed01;
+                            + speedTuck * speed01 + 12f * scooter.WheelieAmount;
         torsoPitch = Mathf.Lerp(torsoPitch, targetPitch, k);
         torsoRoll = Mathf.Lerp(torsoRoll, scooter.LeanAngle * cornerExtraLean, k);
         Rotate(spine, torsoPitch * 0.6f, right);
@@ -96,6 +96,7 @@ public class ScooterRiderMotion : MonoBehaviour
         headYaw = Mathf.Lerp(headYaw, scooter.SteerAmount * headTurn, k);
         Transform look = head != null ? head : neck;
         Rotate(look, headYaw, up);
+        Rotate(look, 8f * scooter.WheelieAmount, right);
         Rotate(look, (scooter.LeanAngle + torsoRoll) * headLevelling, fwd);
 
         // ---- Hands on the grips ----

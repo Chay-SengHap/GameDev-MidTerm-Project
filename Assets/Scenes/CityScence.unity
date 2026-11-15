@@ -17354,7 +17354,7 @@ PrefabInstance:
       objectReference: {fileID: 0}
     - target: {fileID: 400000, guid: ffa95796af8d5884f9d08f66e6bb627e, type: 3}
       propertyPath: m_LocalPosition.z
-      value: 97.5
+      value: 110.16
       objectReference: {fileID: 0}
     - target: {fileID: 400000, guid: ffa95796af8d5884f9d08f66e6bb627e, type: 3}
       propertyPath: m_LocalRotation.w
@@ -22547,6 +22547,79 @@ MonoBehaviour:
   parkingSize: {x: 6, y: 2.8}
   markerShader: {fileID: 4800000, guid: dad16dd2bbf04d80ae15037c3e341010, type: 3}
   scooterGuideDistance: 12
+  pickupRoadApproach: {x: -4.9, y: 0, z: 36.8}
+  additionalStops:
+  - label: West Avenue
+    parking: {x: 25, y: 0, z: 54.8}
+    yaw: 0
+    route:
+    - {x: 3.5, y: 0, z: 42}
+    - {x: 3.5, y: 0, z: 56.5}
+    - {x: 20, y: 0, z: 60}
+  - label: Central Avenue
+    parking: {x: 130, y: 0, z: 54.8}
+    yaw: 0
+    route:
+    - {x: 3.5, y: 0, z: 42}
+    - {x: 3.5, y: 0, z: 56.5}
+    - {x: 125, y: 0, z: 60}
+  - label: East Avenue
+    parking: {x: 210, y: 0, z: 54.8}
+    yaw: 0
+    route:
+    - {x: 3.5, y: 0, z: 42}
+    - {x: 3.5, y: 0, z: 56.5}
+    - {x: 205, y: 0, z: 60}
+  - label: Market Street
+    parking: {x: 24, y: 0, z: 114.8}
+    yaw: 0
+    route:
+    - {x: 3.5, y: 0, z: 42}
+    - {x: 3.5, y: 0, z: 56.5}
+    - {x: 0, y: 0, z: 60}
+    - {x: 0, y: 0, z: 120}
+    - {x: 19, y: 0, z: 120}
+  - label: Central Market
+    parking: {x: 92, y: 0, z: 125.2}
+    yaw: 180
+    route:
+    - {x: 3.5, y: 0, z: 42}
+    - {x: 3.5, y: 0, z: 56.5}
+    - {x: 60, y: 0, z: 60}
+    - {x: 60, y: 0, z: 120}
+    - {x: 87, y: 0, z: 120}
+  - label: East Market
+    parking: {x: 212, y: 0, z: 125.2}
+    yaw: 180
+    route:
+    - {x: 3.5, y: 0, z: 42}
+    - {x: 3.5, y: 0, z: 56.5}
+    - {x: 180, y: 0, z: 60}
+    - {x: 180, y: 0, z: 120}
+    - {x: 207, y: 0, z: 120}
+  - label: West Residential
+    parking: {x: 32, y: 0, z: 154.8}
+    yaw: 0
+    route:
+    - {x: 3.5, y: 0, z: 42}
+    - {x: 3.5, y: 0, z: 56.5}
+    - {x: 0, y: 0, z: 60}
+    - {x: 0, y: 0, z: 160}
+    - {x: 27, y: 0, z: 160}
+  - label: Residential Walkway
+    parking: {x: 194, y: 0, z: 154.8}
+    yaw: 0
+    route:
+    - {x: 3.5, y: 0, z: 42}
+    - {x: 3.5, y: 0, z: 56.5}
+    - {x: 120, y: 0, z: 60}
+    - {x: 120, y: 0, z: 160}
+    - {x: 189, y: 0, z: 160}
+    walkOnly: 1
+    customerPosition: {x: 189, y: 0.2, z: 199}
+  pedestrianArea:
+    m_Center: {x: 180, y: 0, z: 199.5}
+    m_Extent: {x: 50, y: 10, z: 29.5}
 --- !u!1 &720045005
 GameObject:
   m_ObjectHideFlags: 0
@@ -22593,8 +22666,8 @@ MonoBehaviour:
   m_EditorClassIdentifier: 
   autoAddToVehicles: 1
   vehicleNamePrefix: Vehicle
-  minimumCarSpacing: 12
-  maximumMovingCars: 32
+  minimumCarSpacing: 16
+  maximumMovingCars: 24
   modelFacesPositiveZ: 1
   cruiseSpeed: 9
   turnSpeed: 4.5

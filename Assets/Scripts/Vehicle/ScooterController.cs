@@ -1,3 +1,4 @@
+using System.Collections;
 using System.Collections.Generic;
 using UnityEngine;
 
@@ -88,6 +89,7 @@ public class ScooterController : PlayerVehicle
     [SerializeField] private float maxPitch = 2f;
     [Tooltip("Small up/down rocking while riding (m).")]
     [SerializeField] private float roadBumpHeight = 0.003f;
+    [SerializeField, Range(10f, 40f)] private float wheelieAngle = 32f;
 
     [Header("Rider")]
     [SerializeField] private bool startMounted = true;
@@ -120,6 +122,8 @@ public class ScooterController : PlayerVehicle
     /// Smoothed steering input, -1 (left) .. +1 (right).
     public float SteerAmount { get; private set; }
     public float ThrottleInput { get; private set; }
+    internal float WheelieAmount { get; private set; }
+    private Vector3 frontSuspensionPosition;
     public bool IsBraking { get; private set; }
     /// Visual lean in degrees, positive = leaning right.
     public float LeanAngle => lean;
@@ -134,6 +138,7 @@ public class ScooterController : PlayerVehicle
     public Transform RightGrip { get; private set; }
     public Transform LeanPivot => leanPivot;
     public Transform Rider => riderRoot;
+    internal Bounds PedestrianArea { get; set; }
 
     public override float ForwardSpeed => rb != null ? Vector3.Dot(rb.linearVelocity, transform.forward) : 0f;
     public override Rigidbody Body => rb;
@@ -169,6 +174,10 @@ public class ScooterController : PlayerVehicle
     private Quaternion lastGoodRotation = Quaternion.identity;
     private bool headlightOn;
     private string hint;
+    private bool recoveringFromCrash;
+    private bool scooterDropped;
+    private float crashSide;
+    private float crashProtectionUntil;
 
     // =====================================================================================
     // Setup
@@ -418,6 +427,7 @@ public class ScooterController : PlayerVehicle
         var holder = new GameObject("Wheel Colliders").transform;
         holder.SetParent(transform, false);
         frontCollider = CreateWheelCollider(holder, "Front", new Vector3(0f, wheelRadius, frontContactZ));
+        frontSuspensionPosition = frontCollider.transform.localPosition;
         rearCollider = CreateWheelCollider(holder, "Rear", new Vector3(0f, wheelRadius, rearContactZ));
         frontCollider.ConfigureVehicleSubsteps(5f, 12, 15);   // steadier at low speed, no creeping when parked
 
@@ -550,7 +560,7 @@ public class ScooterController : PlayerVehicle
     private void Update()
     {
         bool canAct = ControlsEnabled;
-        if (canAct && input.InteractPressed && riderRoot != null)
+        if (canAct && !recoveringFromCrash && input.InteractPressed && riderRoot != null)
         {
             if (IsMounted) TryGetOff();
             else if (deliveryPackages == null || !deliveryPackages.TryInteract()) TryGetOn();
@@ -566,6 +576,146 @@ public class ScooterController : PlayerVehicle
         UpdateHint();
     }
 
+    private void OnCollisionEnter(Collision collision)
+    {
+        if (!IsMounted || riderRoot == null || !ControlsEnabled || Time.time < crashProtectionUntil)
+            return;
+
+        Rigidbody otherBody = collision.rigidbody;
+        if (otherBody == null ||
+            (otherBody.GetComponent<TrafficCar>() == null &&
+             (!otherBody.TryGetComponent<PlayerVehicle>(out _) || otherBody.mass <= rb.mass)))
+            return;
+
+        for (int i = 0; i < collision.contactCount; i++)
+        {
+            ContactPoint contact = collision.GetContact(i);
+            float impactSpeed = Mathf.Abs(Vector3.Dot(collision.relativeVelocity, contact.normal));
+            if (Mathf.Abs(contact.normal.y) > 0.6f || impactSpeed < 2.5f)
+                continue;
+
+            Vector3 away = Vector3.ProjectOnPlane(contact.normal, Vector3.up).normalized;
+            StartCoroutine(RecoverFromCrash(away, impactSpeed));
+            return;
+        }
+    }
+
+    private IEnumerator RecoverFromCrash(Vector3 away, float impactSpeed)
+    {
+        recoveringFromCrash = true;
+        scooterDropped = true;
+        float side = Vector3.Dot(away, transform.right);
+        crashSide = Mathf.Abs(side) > 0.15f ? Mathf.Sign(side) : FootSide;
+        Vector3 seatedPosition = riderRoot.position;
+        Quaternion seatedRotation = riderRoot.rotation;
+        GetOff(force: true, crashDirection: away);
+        WheelieAmount = 0f;
+
+        var walker = riderRoot.GetComponent<PlayerController>();
+        var body = riderRoot.GetComponent<Rigidbody>();
+        var capsule = riderRoot.GetComponent<CapsuleCollider>();
+        var animator = riderRoot.GetComponent<CharacterAnimator>();
+        var clips = riderRoot.GetComponentInChildren<Animation>(true);
+        walker.enabled = false;
+        if (animator != null) animator.enabled = false;
+        if (clips != null) clips.enabled = false;
+        body.isKinematic = true;
+        capsule.enabled = false;
+
+        Vector3 feet = riderRoot.position;
+        Quaternion upright = riderRoot.rotation;
+        Vector3 slide = away * Mathf.Lerp(0.25f, 1.35f, Mathf.InverseLerp(2.5f, 12f, impactSpeed));
+        foreach (var hit in Physics.SphereCastAll(feet + Vector3.up * 0.45f, 0.3f, away, slide.magnitude,
+                     groundLayers, QueryTriggerInteraction.Ignore))
+        {
+            if (hit.rigidbody == rb || hit.rigidbody == body || hit.normal.y > 0.65f) continue;
+            slide = away * Mathf.Min(slide.magnitude, Mathf.Max(0f, hit.distance - 0.1f));
+        }
+        Vector3 landing = feet + slide;
+        if (Physics.Raycast(landing + Vector3.up, Vector3.down, out var floor, 2f,
+                groundLayers, QueryTriggerInteraction.Ignore) && floor.rigidbody == null && floor.normal.y > 0.65f)
+            landing.y = floor.point.y;
+        else
+            landing = feet;
+
+        Quaternion fallen = Quaternion.AngleAxis(86f, Vector3.Cross(Vector3.up, away)) * upright;
+        string[] boneNames = { "Spine", "LeftArm", "RightArm", "LeftForeArm", "RightForeArm",
+            "LeftUpLeg", "RightUpLeg", "LeftLeg", "RightLeg" };
+        float[] braceAngles = { 14f, 0f, 0f, 0f, 0f, -26f, -38f, 35f, 48f };
+        float[] riseAngles = { 32f, 0f, 0f, 0f, 0f, -60f, -42f, 71f, 54f };
+        var bones = new Transform[boneNames.Length];
+        var rest = new Quaternion[boneNames.Length];
+        var axes = new Vector3[boneNames.Length];
+        Transform leftHand = FindDeep(riderRoot, "LeftHand");
+        Transform rightHand = FindDeep(riderRoot, "RightHand");
+        for (int i = 0; i < bones.Length; i++)
+        {
+            bones[i] = FindDeep(riderRoot, boneNames[i]);
+            if (bones[i] == null) continue;
+            rest[i] = bones[i].localRotation;
+            axes[i] = bones[i].InverseTransformDirection(riderRoot.right);
+        }
+
+        const float fallTime = 0.42f;
+        const float slideTime = 0.48f;
+        const float riseStart = 1.23f;
+        const float riseTime = 1.05f;
+        for (float elapsed = 0f; elapsed < riseStart + riseTime; elapsed += Time.deltaTime)
+        {
+            float fall = Mathf.Clamp01(elapsed / fallTime);
+            float skid = Mathf.Clamp01((elapsed - fallTime) / slideTime);
+            float rise = Mathf.Clamp01((elapsed - riseStart) / riseTime);
+            float crouch = Mathf.Sin(rise * Mathf.PI);
+            float tilt = Mathf.SmoothStep(0f, 1f, fall) * (1f - Mathf.SmoothStep(0f, 1f, rise / 0.75f));
+            Vector3 groundPosition = Vector3.Lerp(feet, landing, 1f - (1f - skid) * (1f - skid));
+            Vector3 position = Vector3.Lerp(seatedPosition, groundPosition + Vector3.up * (0.22f * tilt), fall);
+            position.y += Mathf.Sin(fall * Mathf.PI) * 0.20f;
+            Quaternion rotation = Quaternion.Slerp(Quaternion.Slerp(seatedRotation, upright, fall), fallen, tilt);
+            riderRoot.SetPositionAndRotation(position, rotation);
+            for (int i = 0; i < bones.Length; i++)
+            {
+                if (bones[i] == null) continue;
+                bones[i].localRotation = rest[i] * Quaternion.AngleAxis(
+                    braceAngles[i] * tilt * (1f - crouch) + riseAngles[i] * crouch, axes[i]);
+            }
+            float armBlend = Mathf.SmoothStep(0f, 1f, fall * 3f);
+            float lowerHands = Mathf.SmoothStep(0f, 1f, Mathf.InverseLerp(0.4f, 1f, rise));
+            PoseCrashArm(bones[1], bones[3], leftHand, -1f, armBlend, lowerHands);
+            PoseCrashArm(bones[2], bones[4], rightHand, 1f, armBlend, lowerHands);
+            yield return null;
+        }
+
+        riderRoot.SetPositionAndRotation(landing, upright);
+        for (int i = 0; i < bones.Length; i++)
+            if (bones[i] != null) bones[i].localRotation = rest[i];
+        if (clips != null)
+        {
+            clips.enabled = true;
+            clips.Sample();
+        }
+        if (animator != null) animator.enabled = true;
+        capsule.enabled = true;
+        body.isKinematic = false;
+        walker.enabled = ControlsEnabled;
+        recoveringFromCrash = false;
+        FlashHint("Run back to the scooter and press E to pick it up");
+    }
+
+    private void PoseCrashArm(Transform shoulder, Transform elbow, Transform hand, float side,
+        float amount, float lowerHands)
+    {
+        if (shoulder == null || elbow == null || hand == null || amount <= 0f) return;
+        Vector3 downAndIn = -riderRoot.up - riderRoot.right * side * 0.15f + riderRoot.forward * 0.18f;
+        Quaternion upperTurn = Quaternion.FromToRotation(elbow.position - shoulder.position, downAndIn);
+        shoulder.rotation = Quaternion.Slerp(Quaternion.identity, upperTurn, amount) * shoulder.rotation;
+
+        Vector3 tucked = (riderRoot.up * 0.45f + riderRoot.forward - riderRoot.right * side * 0.55f).normalized;
+        Vector3 relaxed = (-riderRoot.up + riderRoot.forward * 0.18f).normalized;
+        Vector3 forearmDirection = Vector3.Slerp(tucked, relaxed, lowerHands);
+        Quaternion forearmTurn = Quaternion.FromToRotation(hand.position - elbow.position, forearmDirection);
+        elbow.rotation = Quaternion.Slerp(Quaternion.identity, forearmTurn, amount) * elbow.rotation;
+    }
+
     private void FixedUpdate()
     {
         // Safety net: if the physics ever produced NaN / infinity, put the scooter back where it last was fine
@@ -577,6 +727,7 @@ public class ScooterController : PlayerVehicle
                                   ? transform.parent.position : Vector3.zero), lastGoodRotation);
             return;
         }
+        KeepOutOfPedestrianArea();
         lastGoodPosition = rb.position;
         lastGoodRotation = rb.rotation;
 
@@ -608,11 +759,19 @@ public class ScooterController : PlayerVehicle
         if (absSpeed > 1f)
             steerLimit = Mathf.Min(steerLimit, Mathf.Atan(maxCornerAccel * wheelBase / (speed * speed)) * Mathf.Rad2Deg);
         steerAngle = SteerAmount * steerLimit;
-        frontCollider.steerAngle = steerAngle;
-
         bool frontGrounded = frontCollider.GetGroundHit(out WheelHit frontGround);
         bool rearGrounded = rearCollider.GetGroundHit(out WheelHit rearGround);
         bool touching = frontGrounded || rearGrounded;
+        bool liftFront = drive && input.WheelieHeld && speed > 2.5f && throttle >= 0f &&
+            !rearBrake && rearGrounded && !input.ResetPressed;
+        WheelieAmount = Mathf.MoveTowards(WheelieAmount, liftFront ? 1f : 0f,
+            (liftFront ? 3.5f : 4.5f) * dt);
+        float wheelieBlend = Mathf.SmoothStep(0f, 1f, WheelieAmount);
+        // Lift the front suspension probe with the stunt so the rear tyre supports the scooter.
+        frontCollider.transform.localPosition = frontSuspensionPosition +
+            Vector3.up * (wheelBase * Mathf.Sin(wheelieAngle * Mathf.Deg2Rad) * wheelieBlend);
+        steerAngle *= Mathf.Lerp(1f, 0.42f, wheelieBlend);
+        frontCollider.steerAngle = steerAngle;
         if (touching) lastGroundedTime = Time.time;
         IsGrounded = Time.time - lastGroundedTime < 0.15f;
 
@@ -640,9 +799,9 @@ public class ScooterController : PlayerVehicle
         if (!drive) { frontBrake = rearBrakeTorque = brakeDeceleration * m * r; motor = 0f; }   // parked / held
         if (speed01 >= 1f && motor > 0f) motor = 0f;                                         // top speed
 
-        float groundedWheelTorque = frontGrounded && rearGrounded ? motor * 0.5f : motor;
-        frontCollider.motorTorque = frontGrounded ? groundedWheelTorque : 0f;
-        rearCollider.motorTorque = rearGrounded ? groundedWheelTorque : 0f;
+        float frontShare = rearGrounded ? 0.5f * (1f - wheelieBlend) : 1f;
+        frontCollider.motorTorque = frontGrounded ? motor * frontShare : 0f;
+        rearCollider.motorTorque = rearGrounded ? motor - frontCollider.motorTorque : 0f;
         frontCollider.brakeTorque = frontBrake;
         rearCollider.brakeTorque = rearBrakeTorque;
         SetGrip(rearCollider, forwardGrip, rearBrake && absSpeed > 2f ? rearBrakeSidewaysGrip : sidewaysGrip);
@@ -685,6 +844,24 @@ public class ScooterController : PlayerVehicle
         LongitudinalAccel = Mathf.Lerp(LongitudinalAccel, rawAccel, 1f - Mathf.Exp(-8f * dt));
 
         if (drive && input.ResetPressed) ResetOntoWheels();
+    }
+
+    private void KeepOutOfPedestrianArea()
+    {
+        Bounds area = PedestrianArea;
+        if (area.size.x <= 0f || area.size.z <= 0f) return;
+        Vector3 current = rb.position;
+        Vector3 start = lastGoodPosition;
+        current.y = start.y = area.center.y;
+        Vector3 movement = current - start;
+        if (movement.sqrMagnitude <= 0.000001f || area.Contains(start)) return;
+        if (!area.IntersectRay(new Ray(start, movement.normalized), out float distance) ||
+            distance > movement.magnitude) return;
+
+        Vector3 outside = start + movement.normalized * Mathf.Max(0f, distance - 0.08f);
+        outside.y = rb.position.y;
+        Teleport(outside, rb.rotation);
+        if (IsMounted) FlashHint("Pedestrian area - park and continue on foot");
     }
 
     private void TryAssistCurb(bool forward, bool touching, float groundHeight, float dt)
@@ -752,21 +929,26 @@ public class ScooterController : PlayerVehicle
         float moving = Mathf.Clamp01(absSpeed / 1.5f);
 
         // Foot goes down when the rider stops without throttle.
-        bool wantFoot = IsMounted && absSpeed < 1.2f && ThrottleInput < 0.05f;
+        float wheelieBlend = IsMounted ? Mathf.SmoothStep(0f, 1f, WheelieAmount) : 0f;
+        bool wantFoot = IsMounted && wheelieBlend < 0.05f && absSpeed < 1.2f && ThrottleInput < 0.05f;
         FootDown = Mathf.MoveTowards(FootDown, wantFoot ? 1f : 0f, (wantFoot ? 3f : 5f) * dt);
 
         // Lean: into corners from the sideways acceleration; resting on the foot or the stand when stopped.
         float cornerLean = Mathf.Clamp(Mathf.Atan2(lateralAccel, -Physics.gravity.y) * Mathf.Rad2Deg, -maxLeanAngle, maxLeanAngle);
         float restLean = IsMounted ? FootSide * stoppedLeanAngle * FootDown : FootSide * parkedLeanAngle * standAmount;
         float targetLean = IsGrounded ? Mathf.Lerp(restLean, cornerLean, moving) : lean * 0.98f;
+        targetLean *= Mathf.Lerp(1f, 0.35f, wheelieBlend);
+        if (scooterDropped) targetLean = 62f * crashSide;
         lean = Mathf.Lerp(lean, targetLean, 1f - Mathf.Exp(-leanSmoothing * dt));
 
         float targetPitch = Mathf.Clamp(-LongitudinalAccel * pitchPerAccel, -maxPitch, maxPitch);
         pitch = Mathf.Lerp(pitch, targetPitch, 1f - Mathf.Exp(-5f * dt));
 
         // Lean about the tyre contact line, pitch about the rear contact (accelerating) or front contact (braking).
-        Quaternion rot = Quaternion.AngleAxis(-lean, Vector3.forward) * Quaternion.AngleAxis(pitch, Vector3.right);
-        Vector3 pivotPoint = new Vector3(0f, 0f, pitch < 0f ? rearContactZ : frontContactZ);
+        float lift = wheelieAngle + Mathf.Sin(Time.time * 7f) * 1.2f;
+        float visualPitch = Mathf.Lerp(pitch, -lift, wheelieBlend);
+        Quaternion rot = Quaternion.AngleAxis(-lean, Vector3.forward) * Quaternion.AngleAxis(visualPitch, Vector3.right);
+        Vector3 pivotPoint = new Vector3(0f, 0f, visualPitch < 0f ? rearContactZ : frontContactZ);
         float bump = roadBumpHeight * moving * (Mathf.PerlinNoise(Time.time * 6f, 0.3f) - 0.5f) * 2f;
         if (!float.IsFinite(lean) || !float.IsFinite(pitch)) { lean = 0f; pitch = 0f; rot = Quaternion.identity; }
         leanPivot.localRotation = rot;
@@ -782,7 +964,7 @@ public class ScooterController : PlayerVehicle
 
         if (standPivot != null)
         {
-            standAmount = Mathf.MoveTowards(standAmount, IsMounted ? 0f : 1f, 3f * dt);
+            standAmount = Mathf.MoveTowards(standAmount, IsMounted || scooterDropped ? 0f : 1f, 3f * dt);
             standPivot.localRotation = Quaternion.AngleAxis(standFoldAngle * (1f - standAmount), standAxis);
         }
 
@@ -797,7 +979,8 @@ public class ScooterController : PlayerVehicle
             float throttle = Mathf.Abs(ThrottleInput);
             float targetVol = IsMounted ? engineVolume * (0.45f + 0.35f * throttle + 0.2f * speed01) : 0f;
             engineSource.volume = Mathf.MoveTowards(engineSource.volume, targetVol, dt * 1.5f);
-            engineSource.pitch = Mathf.Lerp(engineSource.pitch, 0.8f + 1.3f * speed01 + 0.25f * throttle, 1f - Mathf.Exp(-4f * dt));
+            engineSource.pitch = Mathf.Lerp(engineSource.pitch,
+                0.8f + 1.3f * speed01 + 0.25f * throttle + 0.12f * wheelieBlend, 1f - Mathf.Exp(-4f * dt));
         }
     }
 
@@ -811,17 +994,32 @@ public class ScooterController : PlayerVehicle
         GetOff(force: false);
     }
 
-    private void GetOff(bool force)
+    private void GetOff(bool force, Vector3? crashDirection = null)
     {
         // Stand next to the scooter on the foot side, facing the same way.
         Vector3 side = transform.right * FootSide;
         Vector3 spot = transform.position + side * 0.85f + transform.forward * 0.1f;
+        if (crashDirection.HasValue)
+            spot = transform.position + crashDirection.Value * 1.8f + transform.right * crashSide * 0.8f;
         if (!force && Physics.CheckCapsule(spot + Vector3.up * 0.4f, spot + Vector3.up * 1.5f, 0.28f,
                                            groundLayers, QueryTriggerInteraction.Ignore))
         {
             spot = transform.position - side * 0.85f;   // blocked: try the other side
         }
-        if (Physics.Raycast(spot + Vector3.up * 1.5f, Vector3.down, out RaycastHit hit, 3f, groundLayers, QueryTriggerInteraction.Ignore))
+        if (crashDirection.HasValue)
+        {
+            float closestGround = float.PositiveInfinity;
+            foreach (var ground in Physics.RaycastAll(spot + Vector3.up * 1.5f, Vector3.down,
+                         3f, groundLayers, QueryTriggerInteraction.Ignore))
+            {
+                if (ground.rigidbody != null || ground.normal.y < 0.65f || ground.distance >= closestGround)
+                    continue;
+                closestGround = ground.distance;
+                spot.y = ground.point.y;
+            }
+        }
+        else if (Physics.Raycast(spot + Vector3.up * 1.5f, Vector3.down, out RaycastHit hit, 3f,
+                     groundLayers, QueryTriggerInteraction.Ignore))
             spot.y = hit.point.y;
 
         IsMounted = false;
@@ -851,6 +1049,11 @@ public class ScooterController : PlayerVehicle
         if (riderPose != null) { riderPose.enabled = true; riderPose.MountScooter(); }
         if (riderMotion != null) riderMotion.enabled = true;
         IsMounted = true;
+        if (scooterDropped)
+        {
+            scooterDropped = false;
+            crashProtectionUntil = Time.time + 1f;
+        }
         waitForThrottleRelease = true;
         SetCameraFollowsScooter(true);
     }
@@ -922,6 +1125,8 @@ public class ScooterController : PlayerVehicle
         transform.SetPositionAndRotation(position, rotation);
         lastForwardSpeed = 0f;
         LongitudinalAccel = 0f;
+        WheelieAmount = 0f;
+        if (frontCollider != null) frontCollider.transform.localPosition = frontSuspensionPosition;
     }
 
     // =====================================================================================
@@ -937,16 +1142,17 @@ public class ScooterController : PlayerVehicle
     {
         hint = null;
         if (!showHints || riderRoot == null || !ControlsEnabled) return;
+        if (recoveringFromCrash) { hint = "Recovering from crash"; return; }
         if (Time.time < flashUntil) { hint = flashText; return; }
         if (IsMounted)
         {
-            if (Mathf.Abs(ForwardSpeed) < 0.5f) hint = "[E] Get off    [W / Shift] Ride    [A / D] Steer    [H] Horn    [L] Light";
+            if (Mathf.Abs(ForwardSpeed) < 0.5f) hint = "[E] Get off    [W / Shift] Ride    [A / D] Steer    [Q] Wheelie    [H] Horn    [L] Light";
         }
         else
         {
             Vector3 d = riderRoot.position - transform.position;
             d.y = 0f;
-            if (d.magnitude <= mountRange) hint = "[E] Ride scooter";
+            if (d.magnitude <= mountRange) hint = scooterDropped ? "[E] Pick up and ride scooter" : "[E] Ride scooter";
         }
     }
 

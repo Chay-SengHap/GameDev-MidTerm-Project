@@ -1,3 +1,4 @@
+using System.Collections.Generic;
 using UnityEngine;
 using UnityEngine.EventSystems;
 using UnityEngine.InputSystem;
@@ -9,12 +10,26 @@ using UnityEngine.SceneManagement;
 [DefaultExecutionOrder(150)]
 public class TimedDelivery : MonoBehaviour
 {
-    private enum MissionState { WaitingForPackage, Delivering, Completed, Failed }
+    private enum MissionState { WaitingForPackage, Delivering, ReturningToPickup, Failed }
+
+    [System.Serializable]
+    private class DeliveryStop
+    {
+        public string label;
+        public Vector3 parking;
+        public float yaw;
+        public Vector3[] route;
+        public bool walkOnly;
+        public Vector3 customerPosition;
+    }
 
     [SerializeField] private Vector3[] waypoints = System.Array.Empty<Vector3>();
     [SerializeField] private Vector2 parkingSize = new Vector2(6f, 2.8f);
     [SerializeField] private Shader markerShader;
     [SerializeField, Min(0.5f)] private float scooterGuideDistance = 12f;
+    [SerializeField] private DeliveryStop[] additionalStops = System.Array.Empty<DeliveryStop>();
+    [SerializeField] private Vector3 pickupRoadApproach;
+    [SerializeField] private Bounds pedestrianArea;
 
     private MissionState state;
     private CountdownTimer timer;
@@ -29,6 +44,12 @@ public class TimedDelivery : MonoBehaviour
     private bool readyForHandoff;
     private DeliveryCustomer customer;
     private string objective;
+    private int lastStop = -1;
+    private string destinationLabel;
+    private Vector3[] deliveryRoute;
+    private Vector3[] activeRoute = System.Array.Empty<Vector3>();
+    private Vector3 navigationTarget;
+    private bool walkOnlyStop;
 
     private void Start()
     {
@@ -49,6 +70,8 @@ public class TimedDelivery : MonoBehaviour
         timer = GetComponent<CountdownTimer>();
         timer.Pause();
         timer.Expired += Fail;
+        packages.PackagePickedUp += SelectDestination;
+        scooter.PedestrianArea = pedestrianArea;
         packages.PackageStowed += Begin;
         packages.TryDeliver = TryHandOff;
         packages.CanUnload = () => state == MissionState.Delivering && readyForHandoff &&
@@ -62,7 +85,6 @@ public class TimedDelivery : MonoBehaviour
         hud.Build(Retry);
         hud.BuildMinimap(gameObject.scene);
         CreateDestinationMarker();
-        customer = DeliveryCustomer.Create(transform);
         ShowObjective("Pick up the parcel");
         if (packages.IsStowed) Begin();
     }
@@ -73,6 +95,7 @@ public class TimedDelivery : MonoBehaviour
         if (packages != null)
         {
             packages.PackageStowed -= Begin;
+            packages.PackagePickedUp -= SelectDestination;
             packages.TryDeliver = null;
             packages.CanUnload = null;
         }
@@ -82,14 +105,40 @@ public class TimedDelivery : MonoBehaviour
     private void Begin()
     {
         if (state != MissionState.WaitingForPackage) return;
+        if (deliveryRoute == null) SelectDestination();
         state = MissionState.Delivering;
-        waypointIndex = 0;
-        routeStart = scooter.transform.position;
+        SetRoute(deliveryRoute, marker.transform.position);
         timer.StartTimer();
         marker.SetActive(true);
         hud.SetNavigationVisible(true);
         hud.ShowTime(timer.Remaining);
-        ShowObjective("Ride to the blue marker");
+        ShowObjective("Deliver to " + destinationLabel);
+    }
+
+    private void SelectDestination()
+    {
+        if (state != MissionState.WaitingForPackage || deliveryRoute != null) return;
+        int count = additionalStops.Length + 1;
+        int selected = Random.Range(0, count > 1 && lastStop >= 0 ? count - 1 : count);
+        if (count > 1 && lastStop >= 0 && selected >= lastStop) selected++;
+        lastStop = selected;
+
+        DeliveryStop stop = selected == 0 ? null : additionalStops[selected - 1];
+        destinationLabel = stop?.label ?? "the restaurant";
+        deliveryRoute = stop?.route ?? waypoints;
+        marker.transform.SetPositionAndRotation(stop?.parking ?? transform.position,
+            stop == null ? transform.rotation : Quaternion.Euler(0f, stop.yaw, 0f));
+        walkOnlyStop = stop != null && stop.walkOnly;
+        customer = DeliveryCustomer.Create(marker.transform, walkOnlyStop ? stop.customerPosition : null);
+        if (customer != null) customer.transform.SetParent(transform, true);
+    }
+
+    private void SetRoute(Vector3[] route, Vector3 target)
+    {
+        activeRoute = route;
+        navigationTarget = target;
+        waypointIndex = 0;
+        routeStart = scooter.transform.position;
     }
 
     private void LateUpdate()
@@ -97,26 +146,47 @@ public class TimedDelivery : MonoBehaviour
         Transform courier = !scooter.IsMounted && scooter.Rider != null ? scooter.Rider : scooter.transform;
         bool delivering = state == MissionState.Delivering;
         Vector3 toScooter = FlatDelta(courier.position, scooter.transform.position);
-        bool returnToScooter = !scooter.IsMounted && toScooter.sqrMagnitude >= scooterGuideDistance * scooterGuideDistance;
+        bool walkingToCustomer = customer != null && delivering && !scooter.IsMounted &&
+            packages.IsCarrying && readyForHandoff;
+        bool leavingWalkOnlyStop = walkOnlyStop && state == MissionState.ReturningToPickup;
+        bool returnToScooter = !(walkOnlyStop && walkingToCustomer) && !scooter.IsMounted &&
+            (toScooter.sqrMagnitude >= scooterGuideDistance * scooterGuideDistance || leavingWalkOnlyStop);
         if (delivering) UpdateDelivery(returnToScooter);
-        bool walkingToCustomer = customer != null && delivering && readyForHandoff && packages.IsCarrying;
-        hud.UpdateMinimap(courier, delivering, waypoints,
-            walkingToCustomer || (delivering && IsInParkingZone()) ? waypoints.Length : waypointIndex,
-            walkingToCustomer ? customer.transform.position : transform.position);
+        if (state == MissionState.ReturningToPickup)
+        {
+            if (!returnToScooter) AdvanceWaypoints(courier.position);
+            if (FlatDelta(courier.position, navigationTarget).sqrMagnitude <= 8f * 8f || packages.IsCarrying)
+            {
+                state = MissionState.WaitingForPackage;
+                if (packages.IsCarrying) SelectDestination();
+            }
+            else
+            {
+                ShowObjective(returnToScooter ? "Return to the scooter" : "Return to the parcel shop");
+            }
+        }
+        bool returning = state == MissionState.ReturningToPickup;
+        hud.UpdateMinimap(courier, delivering || returning, activeRoute,
+            walkingToCustomer || (delivering && IsInParkingZone()) ? activeRoute.Length : waypointIndex,
+            walkingToCustomer ? customer.transform.position : navigationTarget);
 
         switch (state)
         {
             case MissionState.WaitingForPackage:
                 ShowObjective(returnToScooter ? "Return to the scooter" :
-                    packages.IsCarrying ? "Load the parcel onto the scooter" : "Pick up the parcel");
+                    packages.IsCarrying ? "Load parcel for " + destinationLabel : "Pick up the parcel");
                 break;
-            case MissionState.Delivering: break;
+            case MissionState.Delivering:
+            case MissionState.ReturningToPickup: break;
             default:
                 if (Keyboard.current?.rKey.wasPressedThisFrame == true) Retry();
                 break;
         }
 
-        UpdatePointer(courier, delivering, returnToScooter, toScooter);
+        if (walkingToCustomer && walkOnlyStop)
+            hud.PointArrow(customer.transform.position - courier.position, Camera.main);
+        else
+            UpdatePointer(courier, delivering || returning, returnToScooter, toScooter);
     }
 
     private void UpdateDelivery(bool returnToScooter)
@@ -133,25 +203,25 @@ public class TimedDelivery : MonoBehaviour
         }
         else if (readyForHandoff)
         {
-            ShowObjective(scooter.IsMounted ? "Press E to get off the scooter" :
+            ShowObjective(scooter.IsMounted ? (walkOnlyStop ? "Scooter parking. Press E to get off" : "Press E to get off the scooter") :
                 packages.IsStowed ? "Press E beside the scooter to take the parcel" :
                 NearCustomer() ? "Press E to hand over the parcel" : "Walk to the waiting customer");
         }
         else
         {
-            ShowObjective(inZone ? "Stop the scooter in the delivery zone" : "Ride to the blue marker");
+            ShowObjective(inZone ? "Stop the scooter in the delivery zone" : "Deliver to " + destinationLabel);
         }
     }
 
-    private void UpdatePointer(Transform courier, bool delivering, bool returnToScooter, Vector3 toScooter)
+    private void UpdatePointer(Transform courier, bool routeActive, bool returnToScooter, Vector3 toScooter)
     {
-        if ((state == MissionState.WaitingForPackage || delivering) && returnToScooter)
+        if (state != MissionState.Failed && returnToScooter)
         {
             hud.PointArrow(toScooter, Camera.main);
         }
-        else if (delivering && !IsInParkingZone())
+        else if (routeActive && (state == MissionState.ReturningToPickup || !IsInParkingZone()))
         {
-            Vector3 target = waypointIndex < waypoints.Length ? waypoints[waypointIndex] : transform.position;
+            Vector3 target = waypointIndex < activeRoute.Length ? activeRoute[waypointIndex] : navigationTarget;
             hud.PointArrow(target - courier.position, Camera.main);
         }
         else
@@ -163,11 +233,11 @@ public class TimedDelivery : MonoBehaviour
     private void AdvanceWaypoints(Vector3 position)
     {
         // Keep route progress independent of camera rotation and scooter steering.
-        while (waypointIndex < waypoints.Length)
+        while (waypointIndex < activeRoute.Length)
         {
-            Vector3 junction = waypoints[waypointIndex];
-            Vector3 incoming = FlatDelta(waypointIndex == 0 ? routeStart : waypoints[waypointIndex - 1], junction);
-            Vector3 outgoing = FlatDelta(junction, waypointIndex + 1 < waypoints.Length ? waypoints[waypointIndex + 1] : transform.position);
+            Vector3 junction = activeRoute[waypointIndex];
+            Vector3 incoming = FlatDelta(waypointIndex == 0 ? routeStart : activeRoute[waypointIndex - 1], junction);
+            Vector3 outgoing = FlatDelta(junction, waypointIndex + 1 < activeRoute.Length ? activeRoute[waypointIndex + 1] : navigationTarget);
             Vector3 offset = FlatDelta(junction, position);
             float alongExit = Vector3.Dot(offset, outgoing.normalized);
             bool onExit = alongExit >= 3f && alongExit <= outgoing.magnitude + 5f &&
@@ -182,7 +252,7 @@ public class TimedDelivery : MonoBehaviour
 
     private bool IsInParkingZone()
     {
-        Vector3 local = transform.InverseTransformPoint(scooter.transform.position);
+        Vector3 local = marker.transform.InverseTransformPoint(scooter.transform.position);
         return Mathf.Abs(local.x) <= parkingSize.x * 0.5f &&
                Mathf.Abs(local.z) <= parkingSize.y * 0.5f && Mathf.Abs(local.y) < 1.5f;
     }
@@ -199,7 +269,21 @@ public class TimedDelivery : MonoBehaviour
         customer.Face(scooter.Rider.position);
         if (!packages.GiveToCustomer(customer.ParcelHold)) return false;
         customer.ReceiveParcel();
-        Finish(MissionState.Completed, "Delivery complete", $"{CountdownTimer.Format(timer.Remaining)} remaining");
+        Destroy(customer.gameObject, 8f);
+        customer = null;
+        packages.RestockPickup();
+        var returnRoute = new List<Vector3>(deliveryRoute);
+        returnRoute.Reverse();
+        if (pickupRoadApproach != Vector3.zero) returnRoute.Add(pickupRoadApproach);
+        SetRoute(returnRoute.ToArray(), packages.PickupPosition);
+        deliveryRoute = null;
+        parkedTime = 0f;
+        readyForHandoff = false;
+        state = MissionState.ReturningToPickup;
+        timer.Pause();
+        marker.SetActive(false);
+        hud.SetNavigationVisible(false);
+        ShowObjective("Delivery complete. Return to the parcel shop");
         return true;
     }
 
@@ -210,12 +294,10 @@ public class TimedDelivery : MonoBehaviour
         hud.ShowObjective(text);
     }
 
-    private void Fail() => Finish(MissionState.Failed, "Time’s up", "Try the delivery again.");
-
-    private void Finish(MissionState result, string title, string detail)
+    private void Fail()
     {
         if (state != MissionState.Delivering) return;
-        state = result;
+        state = MissionState.Failed;
         timer.Pause();
         marker.SetActive(false);
         scooter.ControlsEnabled = false;
@@ -224,12 +306,12 @@ public class TimedDelivery : MonoBehaviour
         Cursor.lockState = CursorLockMode.None;
         Cursor.visible = true;
         hud.SetNavigationVisible(false);
-        hud.ShowResult(title, detail);
+        hud.ShowResult("Time's up", "Try the delivery again.");
     }
 
     private void Retry()
     {
-        if (!enabled || (state != MissionState.Completed && state != MissionState.Failed)) return;
+        if (!enabled || state != MissionState.Failed) return;
         int sceneIndex = gameObject.scene.buildIndex;
         if (sceneIndex < 0)
         {
