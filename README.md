@@ -34,17 +34,17 @@ Faster deliveries earn more stars and more cash. Your cash balance is saved betw
 
 ### Scooter
 
-| Action | Keyboard | Gamepad |
+| Action | Keyboard |
 |---|---|---|
-| Throttle | W / Up / Shift | Right trigger |
-| Brake / reverse | S / Down | Left trigger |
-| Steer | A D / Left Right | Left stick |
-| Rear brake | Space | South button |
-| Get on / off, load and hand over parcel | E | West button |
-| Horn | H | Left stick press |
-| Headlight | L | D-pad up |
-| Set the scooter upright | F | North button |
-| Wheelie (hold) | Q | n/a |
+| Throttle | W / Up / Shift |
+| Brake / reverse | S / Down |
+| Steer | A D / Left Right |
+| Rear brake | Space |
+| Get on / off, load and hand over parcel | E |
+| Horn | H |
+| Headlight | L |
+| Set the scooter upright | F |
+| Wheelie (hold) | Q |
 
 ### On foot
 
