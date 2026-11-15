@@ -680,8 +680,9 @@ public class CityPedestrians : ScriptableObject
     internal static bool TryPavement(Vector3 point, out Vector3 ground)
     {
         ground = default;
+        // Pedestrians' own body colliders are left out, so a walker never blocks its own (or a neighbour's) path check.
         if (!Physics.Raycast(point + Vector3.up * 3f, Vector3.down, out var hit, 4f,
-            ~0, QueryTriggerInteraction.Ignore)) return false;
+            CityPedestrian.NotPedestrians, QueryTriggerInteraction.Ignore)) return false;
         Transform rootPiece = HierarchyGroup.PieceRoot(hit.transform);
         if (rootPiece == null) return false;
         string piece = rootPiece.name;
@@ -691,7 +692,7 @@ public class CityPedestrians : ScriptableObject
             return false;
 
         ground = hit.point;
-        return !Physics.CheckSphere(ground + Vector3.up * 0.75f, 0.35f, ~0, QueryTriggerInteraction.Ignore);
+        return !Physics.CheckSphere(ground + Vector3.up * 0.75f, 0.35f, CityPedestrian.NotPedestrians, QueryTriggerInteraction.Ignore);
     }
 
     /// <summary>

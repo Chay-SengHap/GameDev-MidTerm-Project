@@ -30,6 +30,11 @@ public class TimedDelivery : MonoBehaviour
     [SerializeField] private DeliveryStop[] additionalStops = System.Array.Empty<DeliveryStop>();
     [SerializeField] private Vector3 pickupRoadApproach;
     [SerializeField] private Bounds pedestrianArea;
+    [Header("Route guide")]
+    [Tooltip("Plan the shortest route along the roads instead of the hand-made routes (they stay as a fallback).")]
+    [SerializeField] private bool shortestRoute = true;
+    [Tooltip("Write every route change to the Console (for tuning the guide).")]
+    [SerializeField] private bool logRouteChanges = true;
 
     private MissionState state;
     private CountdownTimer timer;
@@ -50,6 +55,9 @@ public class TimedDelivery : MonoBehaviour
     private Vector3[] activeRoute = System.Array.Empty<Vector3>();
     private Vector3 navigationTarget;
     private bool walkOnlyStop;
+    private RoadPathfinder.RouteField routeField;
+    private readonly List<Vector3> routeCorners = new List<Vector3>();
+    private float lastNoRouteLog = -10f;
 
     private void Start()
     {
@@ -135,10 +143,22 @@ public class TimedDelivery : MonoBehaviour
 
     private void SetRoute(Vector3[] route, Vector3 target)
     {
-        activeRoute = route;
         navigationTarget = target;
         waypointIndex = 0;
         routeStart = scooter.transform.position;
+        // Work out the costs to this destination once; the route itself is then updated every frame.
+        routeField = shortestRoute ? RoadPathfinder.CreateField(target) : null;
+        activeRoute = route;
+        if (routeField != null && routeField.TryRoute(routeStart, scooter.transform.forward, routeCorners))
+            activeRoute = routeCorners.ToArray();
+        else
+        {
+            if (shortestRoute)
+                Debug.LogWarning($"TimedDelivery: no road route from {routeStart} to {target} - using the hand-made route.", this);
+            routeField = null;   // no road route: use the hand-made one
+        }
+        if (logRouteChanges)
+            Debug.Log($"[Route] t={Time.time:F2} new destination {target}, {(routeField != null ? "road routing" : "hand-made route")}, {activeRoute.Length} corners");
     }
 
     private void LateUpdate()
@@ -154,7 +174,7 @@ public class TimedDelivery : MonoBehaviour
         if (delivering) UpdateDelivery(returnToScooter);
         if (state == MissionState.ReturningToPickup)
         {
-            if (!returnToScooter) AdvanceWaypoints(courier.position);
+            if (!returnToScooter) FollowRoute(courier.position, scooter.IsMounted ? ScooterHeading() : courier.forward);
             if (FlatDelta(courier.position, navigationTarget).sqrMagnitude <= 8f * 8f || packages.IsCarrying)
             {
                 state = MissionState.WaitingForPackage;
@@ -196,7 +216,7 @@ public class TimedDelivery : MonoBehaviour
         parkedTime = inZone && ScooterStopped() ? parkedTime + Time.deltaTime : 0f;
         readyForHandoff = parkedTime >= 0.5f;
 
-        if (!inZone) AdvanceWaypoints(scooter.transform.position);
+        if (!inZone) FollowRoute(scooter.transform.position, ScooterHeading());
         if (returnToScooter)
         {
             ShowObjective("Return to the scooter");
@@ -246,6 +266,46 @@ public class TimedDelivery : MonoBehaviour
             waypointIndex++;
         }
 
+    }
+
+    /// Keeps the guide on the shortest route from wherever the courier is right now: missed a turn, took another
+    /// street or turned around - the route changes the same frame. Without a road route, follows the hand-made one.
+    private void FollowRoute(Vector3 position, Vector3 heading)
+    {
+        if (routeField == null || !routeField.TryRoute(position, heading, routeCorners))
+        {
+            if (routeField != null && logRouteChanges && Time.time - lastNoRouteLog > 1f)
+            {
+                lastNoRouteLog = Time.time;
+                Debug.LogWarning($"[Route] t={Time.time:F2} no route from {position} (off the road network?)");
+            }
+            AdvanceWaypoints(position);
+            return;
+        }
+
+        routeStart = position;
+        waypointIndex = 0;
+        if (SameCorners(activeRoute, routeCorners)) return;
+        activeRoute = routeCorners.ToArray();   // a new array only when the route changed, so the minimap redraws
+        if (logRouteChanges)
+            Debug.Log($"[Route] t={Time.time:F2} rerouted at ({position.x:F0}, {position.z:F0}) heading ({heading.x:F1}, {heading.z:F1}): " +
+                      $"{activeRoute.Length} corners, next ({activeRoute[0].x:F0}, {activeRoute[0].z:F0})");
+    }
+
+    private static bool SameCorners(Vector3[] current, List<Vector3> corners)
+    {
+        if (current.Length != corners.Count) return false;
+        for (int i = 0; i < current.Length; i++)
+            if (current[i] != corners[i]) return false;
+        return true;
+    }
+
+    /// Direction the scooter is actually moving (its facing when nearly stopped).
+    private Vector3 ScooterHeading()
+    {
+        Vector3 v = scooter.Body != null ? scooter.Body.linearVelocity : Vector3.zero;
+        v.y = 0f;
+        return v.sqrMagnitude > 1f ? v : scooter.transform.forward;
     }
 
     private static Vector3 FlatDelta(Vector3 from, Vector3 to) => Vector3.ProjectOnPlane(to - from, Vector3.up);
