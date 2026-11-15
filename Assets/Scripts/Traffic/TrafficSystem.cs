@@ -433,7 +433,11 @@ public class TrafficSystem : MonoBehaviour
         }
         if (best == null) return false;
         if (bestY > point.y + maxRoadSurfaceHeight) return false;  // raised curb / sidewalk
-        return IsRoadCollider(best);
+        if (!IsRoadCollider(best)) return false;
+        // Exclude the recessed pull-out bay on bus stop tiles so traffic stays in the main lane.
+        if (best.name.Contains("Bus Stop") && Mathf.Abs(best.transform.InverseTransformPoint(point).x) > 6.5f)
+            return false;
+        return true;
     }
 
     private bool IsRoadCollider(Collider c)

@@ -256,7 +256,7 @@ public class TrafficCar : MonoBehaviour
         yaw = HeadingYaw(heading);
 
         // Move into the right-hand lane.
-        float curb = ScanEdge(pos, Right(heading), sys.maxCurbScan);
+        float curb = ScanCurbDist(pos, Right(heading));
         if (curb > 0f)
         {
             pos += Right(heading) * (curb - sys.laneOffsetFromCurb);
@@ -377,6 +377,8 @@ public class TrafficCar : MonoBehaviour
         if (backUpTimer > 0f)
         {
             backUpTimer -= dt;
+            float previousYaw = yaw;
+            yaw = Mathf.MoveTowardsAngle(yaw, HeadingYaw(heading), 25f * dt);
             Vector3 back = pos - Direction * (1.2f * dt);
             Quaternion rotation = CarRotation();
             if (CanMove(back, rotation, out _))
@@ -384,8 +386,13 @@ public class TrafficCar : MonoBehaviour
                 stopLineDist += 1.2f * dt;
                 pos = back;
                 rb.MovePosition(pos);
+                rb.MoveRotation(rotation);
             }
-            else backUpTimer = 0f;
+            else
+            {
+                yaw = previousYaw;
+                backUpTimer = 0f;
+            }
             if (backUpTimer <= 0f)
             {
                 route.Clear();
@@ -494,7 +501,7 @@ public class TrafficCar : MonoBehaviour
     {
         Vector3 r = Right(heading);
         Vector3 probe = pos + heading * (halfLength * 0.3f);
-        float measuredCurbDist = ScanEdge(probe, r, sys.maxCurbScan);
+        float measuredCurbDist = ScanCurbDist(probe, r);
         if (measuredCurbDist > 0f)
         {
             smoothedCurbDist = smoothedCurbDist > 0f
@@ -506,12 +513,6 @@ public class TrafficCar : MonoBehaviour
         {
             curbDist = -1f;
             smoothedCurbDist = -1f;
-        }
-        // The left side is only needed for turn decisions, so scan it less often (saves raycasts).
-        if (senseCount++ % 5 == 0 || curbDist < 0f)
-        {
-            leftDist = ScanEdge(probe, -r, sys.maxCurbScan * 1.5f);
-            if (curbDist > 0f && leftDist > 0f) roadWidth = curbDist + leftDist;
         }
         aheadDist = ScanEdge(pos + heading * halfLength, heading, sys.lookAhead);
         if (aheadDist > 0f) aheadDist += halfLength;
@@ -531,6 +532,24 @@ public class TrafficCar : MonoBehaviour
                 stopLineDist = d - halfLength - Vector3.Dot(CarRotation() * footprintOffset, heading);
             }
         }
+    }
+
+    /// Scans the right curb distance and ignores localized right-curb recesses such as bus stop bays.
+    private float ScanCurbDist(Vector3 probe, Vector3 r)
+    {
+        float rightDist = ScanEdge(probe, r, sys.maxCurbScan);
+        // Refresh the left curb periodically, at junctions, or when the right curb widens unexpectedly.
+        if (senseCount++ % 5 == 0 || curbDist < 0f || rightDist < 0f || rightDist > sys.laneOffsetFromCurb + 0.5f)
+        {
+            leftDist = ScanEdge(probe, -r, sys.maxCurbScan * 1.5f);
+            if (rightDist > 0f && leftDist > 0f && rightDist + leftDist <= 14f)
+                roadWidth = rightDist + leftDist;
+        }
+        if (rightDist > sys.laneOffsetFromCurb + 0.75f && leftDist > 0f &&
+            leftDist <= roadWidth - sys.laneOffsetFromCurb + 0.75f &&
+            rightDist + leftDist > roadWidth + 0.75f)
+            rightDist = Mathf.Max(0.5f, roadWidth - leftDist);
+        return rightDist;
     }
 
     /// Distance from origin along dir to where the road ends (-1 if it doesn't end within max).
