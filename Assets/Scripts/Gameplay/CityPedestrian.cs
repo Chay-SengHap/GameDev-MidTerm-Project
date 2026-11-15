@@ -112,6 +112,48 @@ public class CityPedestrian : MonoBehaviour
 
     internal void SetLookPoint(Vector3 point) => lookAt = point;
 
+    /// Layer of the pedestrians' body colliders: Unity's built-in "Ignore Raycast" layer. They still collide with
+    /// the scooter, the courier and cars; only the pavement checks (<see cref="NotPedestrians"/>) look past them.
+    internal const int BodyLayer = 2;
+    internal const int NotPedestrians = ~(1 << BodyLayer);
+
+    /// A solid body while playing (the prefabs' own colliders are switched off when spawned): a capsule around the
+    /// person - standing, or lower and set back when seated - on a kinematic Rigidbody, so the scooter and the
+    /// courier bump into people instead of passing through, while the walking code keeps moving them as before.
+    private void AddBodyCollider()
+    {
+        if (TryGetComponent(out CapsuleCollider _)) return;
+
+        float height = 1.75f;
+        var renderers = GetComponentsInChildren<SkinnedMeshRenderer>();
+        if (renderers.Length > 0)
+        {
+            Bounds b = renderers[0].bounds;
+            foreach (var r in renderers) b.Encapsulate(r.bounds);
+            height = Mathf.Clamp(b.max.y - transform.position.y, 1.2f, 2.1f);
+        }
+
+        var body = gameObject.AddComponent<CapsuleCollider>();
+        body.direction = 1;   // upright
+        body.radius = 0.28f;
+        if (sitting)
+        {
+            body.height = 1.35f;
+            body.center = new Vector3(0f, 0.68f, -0.1f);
+        }
+        else
+        {
+            body.height = height;
+            body.center = new Vector3(0f, height * 0.5f, 0f);
+        }
+
+        var rb = GetComponent<Rigidbody>();
+        if (rb == null) rb = gameObject.AddComponent<Rigidbody>();
+        rb.isKinematic = true;
+        rb.useGravity = false;
+        gameObject.layer = BodyLayer;   // only this object; the character's meshes keep their layers
+    }
+
     private void Start()
     {
         if (!Application.isPlaying)
@@ -140,6 +182,7 @@ public class CityPedestrian : MonoBehaviour
     private void SetupRuntime()
     {
         if (graph.IsValid()) return;
+        AddBodyCollider();
         if (waypoints == null || waypoints.Length == 0)
             waypoints = (start - end).sqrMagnitude > 0.01f ? new[] { start, end } : new[] { start };
 
