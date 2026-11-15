@@ -134,5 +134,3 @@ Third-party assets used in this project, all from the Unity Asset Store and used
 - [Casual Character Collection 3](https://assetstore.unity.com/packages/3d/characters/humanoids/fantasy/casual-character-collection-3-399046) by [Hodaart](https://assetstore.unity.com/publishers/136210): pedestrian characters and animations
 - [Low Poly Character Collection 3](https://assetstore.unity.com/packages/3d/characters/humanoids/low-poly-character-collection-3-388758) by [Hodaart](https://assetstore.unity.com/publishers/136210): characters and animations
 - Boxes by [PolyOne Studio](https://assetstore.unity.com/publishers/105194): parcel and box models
-- Delivery scooter and courier models: [add source and link]
-
