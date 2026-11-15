@@ -62,12 +62,13 @@ public sealed class DeliveryMinimap : UnityEngine.UI.MaskableGraphic
         citySize = new Vector2(city.size.x + 12f, city.size.z + 12f);
 
         // Sharp enough to zoom in on: about 6 pixels per metre.
-        float renderScale = Mathf.Min(6f, 4096f / Mathf.Max(citySize.x, citySize.y));
+        int maxImageSize = Mathf.Min(4096, SystemInfo.maxTextureSize);
+        float renderScale = Mathf.Min(6f, maxImageSize / Mathf.Max(citySize.x, citySize.y));
         cityImage = new RenderTexture(Mathf.RoundToInt(citySize.x * renderScale), Mathf.RoundToInt(citySize.y * renderScale), 24)
         {
             name = "City minimap image",
             useMipMap = true,
-            autoGenerateMips = false,
+            autoGenerateMips = true,
             filterMode = FilterMode.Trilinear,
             anisoLevel = 4,
         };
@@ -99,6 +100,7 @@ public sealed class DeliveryMinimap : UnityEngine.UI.MaskableGraphic
             new Vector3(city.center.x, city.max.y + 65f, city.center.z), Quaternion.Euler(90f, 0f, 0f));
         mapCamera = cameraObject.GetComponent<Camera>();
         mapCamera.enabled = false;
+        mapCamera.targetTexture = cityImage;
         mapCamera.orthographic = true;
         mapCamera.orthographicSize = citySize.y * 0.5f;
         mapCamera.aspect = citySize.x / citySize.y;
@@ -115,12 +117,10 @@ public sealed class DeliveryMinimap : UnityEngine.UI.MaskableGraphic
 
     internal void Track(Transform courier, bool showRoute, Vector3[] route, int firstWaypoint, Vector3 destination)
     {
-        if (!captured)
+        if ((!captured || !cityImage.IsCreated()) && !mapCamera.enabled)
         {
-            var request = new UniversalRenderPipeline.SingleCameraRequest { destination = cityImage };
-            RenderPipeline.SubmitRenderRequest(mapCamera, request);
-            cityImage.GenerateMips();
-            captured = true;
+            RenderPipelineManager.endCameraRendering += FinishCapture;
+            mapCamera.enabled = true;
         }
 
         FollowCourier(courier);
@@ -139,6 +139,15 @@ public sealed class DeliveryMinimap : UnityEngine.UI.MaskableGraphic
         waypoints = route;
         nextWaypoint = firstWaypoint;
         SetVerticesDirty();
+    }
+
+    private void FinishCapture(ScriptableRenderContext context, Camera camera)
+    {
+        if (camera != mapCamera) return;
+
+        RenderPipelineManager.endCameraRendering -= FinishCapture;
+        mapCamera.enabled = false;
+        captured = cityImage.IsCreated();
     }
 
     /// Zoom with speed, turn the map so the courier's direction is up and slide it so the courier stays in view.
@@ -178,7 +187,6 @@ public sealed class DeliveryMinimap : UnityEngine.UI.MaskableGraphic
     protected override void OnPopulateMesh(UnityEngine.UI.VertexHelper mesh)
     {
         mesh.Clear();
-        if (!captured) return;
 
         // Sizes are in screen pixels (the map is resized, never scaled), so they look the same at any zoom.
         Vector2 player = playerPosition;
@@ -257,6 +265,12 @@ public sealed class DeliveryMinimap : UnityEngine.UI.MaskableGraphic
 
     protected override void OnDestroy()
     {
+        RenderPipelineManager.endCameraRendering -= FinishCapture;
+        if (mapCamera != null)
+        {
+            mapCamera.enabled = false;
+            mapCamera.targetTexture = null;
+        }
         if (cityImage != null)
         {
             cityImage.Release();
