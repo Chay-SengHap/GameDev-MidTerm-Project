@@ -590,14 +590,46 @@ public class TrafficCar : MonoBehaviour
     private void AtRoadEnd()
     {
         float lane = sys.laneOffsetFromCurb;
-        if (TryTurn(-1f, 90f, Mathf.Max(sys.turnRadius, aheadDist - lane)) ||
-            TryTurn(1f, 90f, Mathf.Max(sys.minTurnRadius, lane))) return;
+        bool hasSideRoad = false;
+        if (TryRoadEndTurn(-1f, Mathf.Max(sys.turnRadius, aheadDist - lane), ref hasSideRoad) ||
+            TryRoadEndTurn(1f, Mathf.Max(sys.minTurnRadius, lane), ref hasSideRoad)) return;
 
         float radius = Mathf.Max(sys.minTurnRadius * 0.8f, (roadWidth - 2f * lane) * 0.5f);
-        // A mapped junction already has legal exits; an improvised U-turn here can send
-        // the car straight back into the same approach and repeat the loop.
-        if ((lightAhead != null || !TryTurn(-1f, 180f, radius)) && aheadDist < halfLength + 3f)
+        if ((hasSideRoad || lightAhead != null || !TryTurn(-1f, 180f, radius)) &&
+            aheadDist < halfLength + 3f)
             roadBlocked = true;
+    }
+
+    private bool TryRoadEndTurn(float sign, float preferredRadius, ref bool hasSideRoad)
+    {
+        Vector3 exitDirection = Right(heading) * sign;
+        Quaternion exitRotation = Quaternion.Euler(0f, HeadingYaw(heading) + sign * 90f +
+            (sys.modelFacesPositiveZ ? 0f : 180f), 0f);
+
+        if (TryTurn(sign, 90f, preferredRadius)) return true;
+        hasSideRoad |= ExitContinues(preferredRadius);
+
+        // A corner can fit a tighter or wider arc than the default for this lane.
+        for (int offset = 1; offset <= 2; offset++)
+        {
+            float tighter = preferredRadius - offset;
+            if (tighter >= sys.minTurnRadius && TryRadius(tighter, ref hasSideRoad)) return true;
+            if (TryRadius(preferredRadius + offset, ref hasSideRoad)) return true;
+        }
+        return false;
+
+        bool TryRadius(float radius, ref bool sideRoad)
+        {
+            if (!ExitContinues(radius)) return false;
+            sideRoad = true;
+            return TryTurn(sign, 90f, radius);
+        }
+
+        bool ExitContinues(float radius)
+        {
+            Vector3 exit = pos + (heading + exitDirection) * radius;
+            return OnRoad(exit + exitDirection * (halfLength * 2f + 2f), exitRotation);
+        }
     }
 
     private bool TryFollowRoute()
