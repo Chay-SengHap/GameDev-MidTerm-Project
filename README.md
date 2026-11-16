@@ -1,136 +1,193 @@
 # Delivery Rush
 
-> Deliver across the city. Pick up a parcel, load it on your scooter, and beat the clock through a living low-poly city full of traffic and pedestrians.
+> Pick up parcels, navigate city traffic, and deliver all three packages before time runs out!
 
-A 3D delivery game built in Unity as our Game Development mid-term project.
+Delivery Rush is a 3D delivery game developed in Unity for our Game Development mid-term project. Players ride a scooter through a low-poly city, avoid obstacles, and deliver parcels to customers.
 
+## Game Objective
 
-## Gameplay
+Complete **three deliveries on time** to win.
 
-You play a courier working out of a parcel shop. Each delivery is a race against the clock:
+Each delivery has its own countdown. If the timer reaches zero before you hand the parcel to the customer, you lose and can restart the mission.
 
-1. **Pick up the parcel.** Walk to the shop parcel and press **E**.
-2. **Load the scooter.** Press **E** beside the scooter. When the cargo lid closes, the countdown starts and the navigation guide appears.
-3. **Ride to the customer.** Follow the guide arrow, the route line on the minimap, and the blue beam that marks the destination. The clock keeps running while you mount, wait in traffic, or get off.
-4. **Park in the delivery zone.** Stop the scooter inside the marked zone, press **E** to get off, then walk to the waiting customer.
-5. **Hand over the parcel.** Press **E** next to the customer. The clock stops and you are paid based on the time you have left.
-6. **Return to the parcel shop** to collect the next parcel. Destinations are picked at random and never repeat back to back.
+## Quick Link
 
-If the timer reaches zero, the screen shows **Time's up**. Press **R** to retry. The scene reloads for a clean reset.
+| Deliverable | Link |
+|---|---|
+|  Gameplay video | Here:  |
+|  Playable build (ZIP) |Here:  |
+|Git repository |Here: |
+
+---
+
+## How to Play
+
+1. **Pick up a parcel.** Walk to the parcel shop and press **E** near the parcel.
+2. **Load the scooter.** Press **E** beside the scooter to put the parcel in the cargo box. The timer starts when the cargo lid closes.
+3. **Ride to the customer.** Follow the navigation arrow, the route on the minimap, and the blue destination beam.
+4. **Avoid obstacles.** Navigate around traffic, pedestrians, and other objects on the road.
+5. **Park at the destination.** Stop the scooter inside the marked delivery zone.
+6. **Deliver the parcel.** Press **E** to get off the scooter, take the parcel, and press **E** near the customer to hand it over.
+7. **Collect the next parcel.** After the first and second deliveries, return to the parcel shop.
+8. **Win the game.** Successfully deliver the third parcel before its timer runs out.
+
+The HUD shows your delivery progress, such as **1/3 delivered**. Destinations are selected randomly and do not repeat back to back.
+
+### Winning and Losing
+
+- **Win:** Deliver all three parcels before their individual timers run out.
+- **Lose:** Let the timer reach zero before handing over a parcel.
+- **Retry:** Press **R** or select **Retry** on the result screen. The mission restarts from **0/3 deliveries**.
 
 ### Rewards
 
-Faster deliveries earn more stars and more cash. Your cash balance is saved between sessions.
+You earn stars and cash based on how much time remains when you complete a delivery. Your cash balance is saved between sessions.
 
-| Time left on the clock | Stars | Reward |
-|---|---|---|
-| 30 s or more | 5 | 500 |
-| 20 s or more | 4 | 400 |
-| 10 s or more | 3 | 300 |
-| 5 s or more | 2 | 200 |
-| Under 5 s | 1 | 100 |
+| Time remaining | Stars | Cash reward |
+|---|---:|---:|
+| 30 seconds or more | 5 | 500 |
+| 20 seconds or more | 4 | 400 |
+| 10 seconds or more | 3 | 300 |
+| 5 seconds or more | 2 | 200 |
+| Under 5 seconds | 1 | 100 |
 
 ## Controls
 
 ### Scooter
 
-| Action | Keyboard |
-|---|---|---|
-| Throttle | W / Up / Shift |
-| Brake / reverse | S / Down |
-| Steer | A D / Left Right |
+| Action | Key |
+|---|---|
+| Throttle | W / Up Arrow / Shift |
+| Brake / reverse | S / Down Arrow |
+| Steer | A / D / Left Arrow / Right Arrow |
 | Rear brake | Space |
-| Get on / off, load and hand over parcel | E |
+| Get on / off, load or hand over parcel | E |
 | Horn | H |
 | Headlight | L |
-| Set the scooter upright | F |
-| Wheelie (hold) | Q |
+| Set scooter upright | F |
+| Wheelie | Hold Q |
 
-### On foot
+### On Foot
 
-| Action | Keys |
+| Action | Key |
 |---|---|
-| Walk | W A S D |
+| Walk | W / A / S / D |
 | Run | Shift |
 | Jump | Space |
-| Crouch | C (toggle) / Ctrl (hold) |
+| Crouch | C to toggle / Ctrl to hold |
 | Look around | Mouse |
+| Pick up or hand over parcel | E |
 
 ### Menus
 
-| Action | Keys |
+| Action | Key |
 |---|---|
-| Pause menu | Esc / Start |
-| Retry after time runs out | R |
+| Pause | Esc / Start |
+| Retry after winning or losing | R |
 
-## Features
+## Game Features
 
-- **Timed delivery missions** with a pickup, load, ride, and hand-over loop, plus a star and cash reward system.
-- **Turn-by-turn navigation.** A pathfinder plans the shortest route along the city's roads and updates it as you drive. It is shown as a HUD arrow and as a route line on a rotating minimap.
-- **Physics-based scooter** with wheel colliders, lean into corners, wheelies, a rear brake, and a fold-away side stand. The rider has procedural body motion.
-- **AI traffic.** Cars follow the roads, keep a safe gap, obey intersections and signals, and honk when you block them.
-- **City pedestrians.** Dozens of walkers populate the streets, and some sit at cafe chairs.
-- **In-game menus.** Title and pause menus are built in code, with Resume, Restart, Controls, Main Menu, and Quit.
-- **Cargo animations** for picking up, carrying, and stowing the parcel, and a customer who receives it.
+- **Three-delivery mission** with a progress counter, win condition, and failure condition.
+- **Timed deliveries** with parcel pickup, scooter loading, and customer handover.
+- **Rewards** based on delivery speed.
+- **Navigation guide** with an arrow, destination beam, and minimap route.
+- **Physics-based scooter** with steering, leaning, braking, wheelies, and collisions.
+- **City traffic** with cars that follow roads and respond to intersections.
+- **Pedestrians** walking and sitting around the city.
+- **Menus** for playing, pausing, restarting, viewing controls, and quitting.
 
-## Getting Started
+## Gameplay Video
+
+Watch our gameplay recording here:
+
+**[Gameplay Video](<ADD_GAMEPLAY_VIDEO_LINK>)**
+
+The video demonstrates the controls, obstacles, physics interactions, winning or losing, and restarting the game.
+
+## Playable Build
+
+Download the standalone game here:
+
+**[Download Delivery Rush](<ADD_BUILD_DOWNLOAD_LINK>)**
+
+### How to Run the Build
+
+1. Download the ZIP file from the link above.
+2. Extract the **entire ZIP file**.
+3. Open the extracted folder.
+4. Run the game executable.
+5. Select **Play** from the main menu.
+
+Keep the executable and all other extracted files and folders together. The game can run without opening Unity.
+
+**Platform:** `<Windows or macOS>`
+
+## Getting Started in Unity
 
 ### Requirements
 
-- **Unity 6000.3.8f1** (Unity 6.3). Install it through Unity Hub.
-- Universal Render Pipeline 17.3, Input System 1.19, and the other packages listed in `Packages/manifest.json`. Unity installs them automatically when you open the project.
+- **Unity 6000.3.8f1** (Unity 6.3).
+- Unity Hub.
+- Universal Render Pipeline 17.3, Input System 1.19, and the other packages listed in `Packages/manifest.json`.
 
-### Run the game
+Unity installs the required packages when the project is opened.
+
+### Run the Project
 
 1. Clone the repository:
+
    ```bash
-   git clone <repo-url>
+   git clone <REPOSITORY_URL>
    cd GameDev-MidTerm-Project
    ```
-2. Open the folder in Unity Hub (**Add > Add project from disk**) using Unity `6000.3.8f1`.
-3. Wait for the first import to finish. It can take a few minutes because of the large asset packs.
-4. Open `Assets/Scenes/CityScence.unity`.
-5. Press **Play**. The main menu appears over the city, and the game starts when you choose **Play**.
 
-### Build a standalone player
+2. Open Unity Hub and select **Add > Add project from disk**.
+3. Select the project folder and open it with Unity `6000.3.8f1`.
+4. Wait for Unity to finish importing the assets.
+5. Open `Assets/Scenes/CityScence.unity`.
+6. Press **Play** in the Unity Editor.
+7. Select **Play** from the main menu.
 
-`Assets/Scenes/SampleScene.unity` is listed first in **File > Build Profiles > Scene List**. Before building, move `CityScence` to the top of the list or untick `SampleScene`, so the game starts in the city.
+### Build the Game
+
+1. Open **File > Build Profiles**.
+2. Open the **Scene List**.
+3. Make sure `CityScence` is enabled and is the first scene, or disable `SampleScene`.
+4. Select your target platform and build the game.
+5. Test the build and include all generated files when creating the ZIP archive.
 
 ## Project Structure
 
-```
+```text
 Assets/
-  Scenes/            CityScence (main game scene), SampleScene
+  Scenes/            Main game scene and sample scene
   Scripts/
-    Gameplay/        Delivery missions, parcel handling, timer, pedestrians, game rules
-    Navigation/      Road pathfinding, checkpoints, navigation arrow
-    Traffic/         AI cars, intersections, traffic signals
-    Vehicle/         Scooter physics, input, camera, collisions, sounds
-    UI/              Main and pause menu, delivery HUD, minimap
+    Gameplay/        Deliveries, parcels, timer, pedestrians, and game rules
+    Navigation/      Road pathfinding and navigation
+    Traffic/         Traffic cars, intersections, and signals
+    Vehicle/         Scooter movement, input, camera, collisions, and sounds
+    UI/              Menus, delivery HUD, and minimap
     Editor/          Editor tools for scene and character setup
-  Prefabs/           Scooter, courier, street lights, trees, road ends
-  Resources/         Pedestrian collection
-  Settings/          URP render pipeline assets and volume profiles
-  Branding/          VET logo and terminal facade assets
+  Prefabs/           Game object prefabs
+  Resources/         Runtime resources
+  Settings/          Render pipeline assets and settings
 ProjectSettings/     Unity project settings
-Packages/            Package manifest
+Packages/            Unity package manifest
 ```
 
-## Design Notes
+## Team and Contributions
 
-The original plan for the timed delivery feature is in [`delivery-rush-timed-delivery-plan.md`](delivery-rush-timed-delivery-plan.md). It covers the player flow, the timer and navigation design, the implementation order, and a playtest checklist.
+- **Chay Senghap**
+- **Ly Srongchhay**
+- **Sor Channorakpitou**
+- **Yann Sokmeng**
 
-## Team
+## Assets and References
 
-- [Chhay Senghap]
-- [Ly Srongchhay]
-- [Sor Channorakpitou]
-- [Yann Sokmeng]
-## Credits
+The following third-party assets were used in this project:
 
-Third-party assets used in this project, all from the Unity Asset Store and used under the [Standard Unity Asset Store EULA](https://unity.com/legal/as-terms):
+- [SimplePoly City - Low Poly Assets](https://assetstore.unity.com/packages/3d/environments/simplepoly-city-low-poly-assets-58899) by [VenCreations](https://assetstore.unity.com/publishers/19573) — city buildings, roads, vehicles, and props.
+- [Casual Character Collection 3](https://assetstore.unity.com/packages/3d/characters/humanoids/fantasy/casual-character-collection-3-399046) by [Hodaart](https://assetstore.unity.com/publishers/136210) — pedestrian characters and animations.
+- [Low Poly Character Collection 3](https://assetstore.unity.com/packages/3d/characters/humanoids/low-poly-character-collection-3-388758) by [Hodaart](https://assetstore.unity.com/publishers/136210) — characters and animations.
+- Boxes by [PolyOne Studio](https://assetstore.unity.com/publishers/105194) — parcel and box models.
 
-- [SimplePoly City - Low Poly Assets](https://assetstore.unity.com/packages/3d/environments/simplepoly-city-low-poly-assets-58899) by [VenCreations](https://assetstore.unity.com/publishers/19573): city buildings, roads, vehicles, and props
-- [Casual Character Collection 3](https://assetstore.unity.com/packages/3d/characters/humanoids/fantasy/casual-character-collection-3-399046) by [Hodaart](https://assetstore.unity.com/publishers/136210): pedestrian characters and animations
-- [Low Poly Character Collection 3](https://assetstore.unity.com/packages/3d/characters/humanoids/low-poly-character-collection-3-388758) by [Hodaart](https://assetstore.unity.com/publishers/136210): characters and animations
-- Boxes by [PolyOne Studio](https://assetstore.unity.com/publishers/105194): parcel and box models
