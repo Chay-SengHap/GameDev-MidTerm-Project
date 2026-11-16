@@ -90,7 +90,7 @@ You earn stars and cash based on how much time remains when you complete a deliv
 
 Watch our gameplay recording here:
 
-**[Gameplay Video](<ADD_GAMEPLAY_VIDEO_LINK>)**
+**[Gameplay Video](<https://drive.google.com/file/d/19n553FPyO2AyLRFcGVqn9kmAQQaswhY5/view?usp=drive_link>)**
 
 The video demonstrates the controls, obstacles, physics interactions, winning or losing, and restarting the game.
 
@@ -98,7 +98,7 @@ The video demonstrates the controls, obstacles, physics interactions, winning or
 
 Download the standalone game here:
 
-**[Download Delivery Rush](<ADD_BUILD_DOWNLOAD_LINK>)**
+**[Download Delivery Rush](<https://drive.google.com/file/d/1lrG30G5nIM74ZVxFCsI7mh-FF-Eu6XRb/view?usp=drive_link>)**
 
 ### How to Run the Build
 
