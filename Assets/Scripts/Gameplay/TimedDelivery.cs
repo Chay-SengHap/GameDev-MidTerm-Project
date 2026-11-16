@@ -10,7 +10,9 @@ using UnityEngine.SceneManagement;
 [DefaultExecutionOrder(150)]
 public class TimedDelivery : MonoBehaviour
 {
-    private enum MissionState { WaitingForPackage, Delivering, ReturningToPickup, Failed }
+    private enum MissionState { WaitingForPackage, Delivering, ReturningToPickup, Failed, Won }
+    private const int DeliveriesToWin = 3;
+    private int completedDeliveries;
 
     [System.Serializable]
     private class DeliveryStop
@@ -243,7 +245,7 @@ public class TimedDelivery : MonoBehaviour
 
     private void UpdatePointer(Transform courier, bool routeActive, bool returnToScooter, Vector3 toScooter)
     {
-        if (state != MissionState.Failed && returnToScooter)
+        if (state != MissionState.Failed && state != MissionState.Won && returnToScooter)
         {
             hud.PointArrow(toScooter, Camera.main);
         }
@@ -348,6 +350,21 @@ public class TimedDelivery : MonoBehaviour
         hud.ShowDeliveryReward(stars, reward, timer.Remaining, cashBalance);
         Destroy(customer.gameObject, 8f);
         customer = null;
+        completedDeliveries++;
+        if (completedDeliveries >= DeliveriesToWin)
+        {
+            state = MissionState.Won;
+            timer.Pause();
+            marker.SetActive(false);
+            scooter.ControlsEnabled = false;
+            if (scooter.Rider != null && scooter.Rider.TryGetComponent<PlayerController>(out var walking))
+                walking.enabled = false;
+            Cursor.lockState = CursorLockMode.None;
+            Cursor.visible = true;
+            hud.SetNavigationVisible(false);
+            hud.ShowResult("You win!", "All 3 parcels delivered!");
+            return true;
+        }
         packages.RestockPickup();
         var returnRoute = new List<Vector3>(deliveryRoute);
         returnRoute.Reverse();
@@ -368,7 +385,7 @@ public class TimedDelivery : MonoBehaviour
     {
         if (objective == text) return;
         objective = text;
-        hud.ShowObjective(text);
+        hud.ShowObjective($"{completedDeliveries}/{DeliveriesToWin} delivered  |  {text}");
     }
 
     private void Fail()
@@ -388,7 +405,7 @@ public class TimedDelivery : MonoBehaviour
 
     private void Retry()
     {
-        if (!enabled || state != MissionState.Failed) return;
+        if (!enabled || (state != MissionState.Failed && state != MissionState.Won)) return;
         int sceneIndex = gameObject.scene.buildIndex;
         if (sceneIndex < 0)
         {

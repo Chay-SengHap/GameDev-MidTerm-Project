@@ -36,6 +36,9 @@ public class TimedDeliveryHud : MonoBehaviour
             new Vector2(0f, -48f), new Vector2(490f, 52f));
         header.gameObject.AddComponent<UnityEngine.UI.Image>().color = new Color(0.04f, 0.09f, 0.14f, 0.9f);
         objective = Label(header, "Objective", Vector2.zero, new Vector2(470f, 50f), 24);
+        objective.resizeTextForBestFit = true;
+        objective.resizeTextMinSize = 14;
+        objective.resizeTextMaxSize = 24;
         clock = Label(root.transform, "Countdown", new Vector2(0f, -104f), new Vector2(150f, 50f), 38, new Vector2(0.5f, 1f));
         var cashPanel = Rect(root.transform, "Cash panel", new Vector2(0f, 1f),
             new Vector2(24f, -316f), new Vector2(280f, 58f));
