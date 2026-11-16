@@ -110,7 +110,7 @@ Download the standalone game here:
 
 Keep the executable and all other extracted files and folders together. The game can run without opening Unity.
 
-**Platform:** `<Windows or macOS>`
+**Platform:** `<Windows>`
 
 ## Getting Started in Unity
 
