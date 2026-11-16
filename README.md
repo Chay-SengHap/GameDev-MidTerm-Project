@@ -10,16 +10,6 @@ Complete **three deliveries on time** to win.
 
 Each delivery has its own countdown. If the timer reaches zero before you hand the parcel to the customer, you lose and can restart the mission.
 
-## Quick Link
-
-| Deliverable | Link |
-|---|---|
-|  Gameplay video | Here:  |
-|  Playable build (ZIP) |Here:  |
-|Git repository |Here: |
-
----
-
 ## How to Play
 
 1. **Pick up a parcel.** Walk to the parcel shop and press **E** near the parcel.
